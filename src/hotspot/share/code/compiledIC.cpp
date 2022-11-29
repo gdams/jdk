@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -39,6 +39,7 @@
 #include "oops/method.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "oops/symbol.hpp"
+#include "runtime/continuationEntry.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/icache.hpp"
 #include "runtime/safepoint.hpp"
@@ -67,7 +68,7 @@ bool CompiledICLocker::is_safe(CompiledMethod* method) {
 }
 
 bool CompiledICLocker::is_safe(address code) {
-  CodeBlob* cb = CodeCache::find_blob_unsafe(code);
+  CodeBlob* cb = CodeCache::find_blob(code);
   assert(cb != NULL && cb->is_compiled(), "must be compiled");
   CompiledMethod* cm = cb->as_compiled_method();
   return CompiledICProtectionBehaviour::current()->is_safe(cm);
@@ -127,7 +128,7 @@ void CompiledIC::internal_set_ic_destination(address entry_point, bool is_icstub
   }
 
   {
-    CodeBlob* cb = CodeCache::find_blob_unsafe(_call->instruction_address());
+    CodeBlob* cb = CodeCache::find_blob(_call->instruction_address());
     assert(cb != NULL && cb->is_compiled(), "must be compiled");
     _call->set_destination_mt_safe(entry_point);
   }
@@ -316,10 +317,7 @@ bool CompiledIC::is_megamorphic() const {
 bool CompiledIC::is_call_to_compiled() const {
   assert(CompiledICLocker::is_safe(_method), "mt unsafe call");
 
-  // Use unsafe, since an inline cache might point to a zombie method. However, the zombie
-  // method is guaranteed to still exist, since we only remove methods after all inline caches
-  // has been cleaned up
-  CodeBlob* cb = CodeCache::find_blob_unsafe(ic_destination());
+  CodeBlob* cb = CodeCache::find_blob(ic_destination());
   bool is_monomorphic = (cb != NULL && cb->is_compiled());
   // Check that the cached_value is a klass for non-optimized monomorphic calls
   // This assertion is invalid for compiler1: a call that does not look optimized (no static stub) can be used
@@ -327,12 +325,11 @@ bool CompiledIC::is_call_to_compiled() const {
   // For JVMCI this occurs because CHA is only used to improve inlining so call sites which could be optimized
   // virtuals because there are no currently loaded subclasses of a type are left as virtual call sites.
 #ifdef ASSERT
-  CodeBlob* caller = CodeCache::find_blob_unsafe(instruction_address());
+  CodeBlob* caller = CodeCache::find_blob(instruction_address());
   bool is_c1_or_jvmci_method = caller->is_compiled_by_c1() || caller->is_compiled_by_jvmci();
   assert( is_c1_or_jvmci_method ||
          !is_monomorphic ||
          is_optimized() ||
-         !caller->is_alive() ||
          (cached_metadata() != NULL && cached_metadata()->is_klass()), "sanity check");
 #endif // ASSERT
   return is_monomorphic;
@@ -345,10 +342,7 @@ bool CompiledIC::is_call_to_interpreted() const {
   // is optimized), or calling to an I2C blob
   bool is_call_to_interpreted = false;
   if (!is_optimized()) {
-    // must use unsafe because the destination can be a zombie (and we're cleaning)
-    // and the print_compiled_ic code wants to know if site (in the non-zombie)
-    // is to the interpreter.
-    CodeBlob* cb = CodeCache::find_blob_unsafe(ic_destination());
+    CodeBlob* cb = CodeCache::find_blob(ic_destination());
     is_call_to_interpreted = (cb != NULL && cb->is_adapter_blob());
     assert(!is_call_to_interpreted || (is_icholder_call() && cached_icholder() != NULL), "sanity check");
   } else {
@@ -373,8 +367,6 @@ bool CompiledIC::set_to_clean(bool in_use) {
 
   address entry = _call->get_resolve_call_stub(is_optimized());
 
-  // A zombie transition will always be safe, since the metadata has already been set to NULL, so
-  // we only need to patch the destination
   bool safe_transition = _call->is_safe_for_patching() || !in_use || is_optimized() || SafepointSynchronize::is_at_safepoint();
 
   if (safe_transition) {
@@ -421,11 +413,11 @@ bool CompiledIC::set_to_monomorphic(CompiledICInfo& info) {
   // callsites. In addition ic_miss code will update a site to monomorphic if it determines
   // that an monomorphic call to the interpreter can now be monomorphic to compiled code.
   //
-  // In both of these cases the only thing being modifed is the jump/call target and these
+  // In both of these cases the only thing being modified is the jump/call target and these
   // transitions are mt_safe
 
   Thread *thread = Thread::current();
-  if (info.to_interpreter() || info.to_aot()) {
+  if (info.to_interpreter()) {
     // Call to interpreter
     if (info.is_optimized() && is_optimized()) {
       assert(is_clean(), "unsafe IC path");
@@ -439,9 +431,8 @@ bool CompiledIC::set_to_monomorphic(CompiledICInfo& info) {
 
       if (TraceICs) {
          ResourceMark rm(thread);
-         tty->print_cr ("IC@" INTPTR_FORMAT ": monomorphic to %s: %s",
+         tty->print_cr ("IC@" INTPTR_FORMAT ": monomorphic to interpreter: %s",
            p2i(instruction_address()),
-           (info.to_aot() ? "aot" : "interpreter"),
            method->print_value_string());
       }
     } else {
@@ -460,7 +451,7 @@ bool CompiledIC::set_to_monomorphic(CompiledICInfo& info) {
     // Call to compiled code
     bool static_bound = info.is_optimized() || (info.cached_metadata() == NULL);
 #ifdef ASSERT
-    CodeBlob* cb = CodeCache::find_blob_unsafe(info.entry());
+    CodeBlob* cb = CodeCache::find_blob(info.entry());
     assert (cb != NULL && cb->is_compiled(), "must be compiled!");
 #endif /* ASSERT */
 
@@ -516,7 +507,7 @@ void CompiledIC::compute_monomorphic_entry(const methodHandle& method,
   CompiledMethod* method_code = method->code();
 
   address entry = NULL;
-  if (method_code != NULL && method_code->is_in_use()) {
+  if (method_code != NULL && method_code->is_in_use() && !method_code->is_unloading()) {
     assert(method_code->is_compiled(), "must be compiled");
     // Call to compiled code
     //
@@ -541,19 +532,13 @@ void CompiledIC::compute_monomorphic_entry(const methodHandle& method,
       entry      = method_code->entry_point();
     }
   }
-  bool far_c2a = entry != NULL && caller_is_nmethod && method_code->is_far_code();
-  if (entry != NULL && !far_c2a) {
-    // Call to near compiled code (nmethod or aot).
+  if (entry != NULL) {
+    // Call to near compiled code.
     info.set_compiled_entry(entry, is_optimized ? NULL : receiver_klass, is_optimized);
   } else {
     if (is_optimized) {
-      if (far_c2a) {
-        // Call to aot code from nmethod.
-        info.set_aot_entry(entry, method());
-      } else {
-        // Use stub entry
-        info.set_interpreter_entry(method()->get_c2i_entry(), method());
-      }
+      // Use stub entry
+      info.set_interpreter_entry(method()->get_c2i_entry(), method());
     } else {
       // Use icholder entry
       assert(method_code == NULL || method_code->is_compiled(), "must be compiled");
@@ -566,7 +551,7 @@ void CompiledIC::compute_monomorphic_entry(const methodHandle& method,
 
 
 bool CompiledIC::is_icholder_entry(address entry) {
-  CodeBlob* cb = CodeCache::find_blob_unsafe(entry);
+  CodeBlob* cb = CodeCache::find_blob(entry);
   if (cb != NULL && cb->is_adapter_blob()) {
     return true;
   }
@@ -614,13 +599,6 @@ bool CompiledDirectStaticCall::is_call_to_interpreted() const {
   return cm->stub_contains(destination());
 }
 
-bool CompiledDirectStaticCall::is_call_to_far() const {
-  // It is a call to aot method, if it calls to a stub. Hence, the destination
-  // must be in the stub part of the nmethod that contains the call
-  CodeBlob* desc = CodeCache::find_blob(instruction_address());
-  return desc->as_compiled_method()->stub_contains(destination());
-}
-
 void CompiledStaticCall::set_to_compiled(address entry) {
   if (TraceICs) {
     ResourceMark rm;
@@ -645,11 +623,6 @@ void CompiledStaticCall::set(const StaticCallInfo& info) {
   if (info._to_interpreter) {
     // Call to interpreted code
     set_to_interpreted(info.callee(), info.entry());
-#if INCLUDE_AOT
-  } else if (info._to_aot) {
-    // Call to far code
-    set_to_far(info.callee(), info.entry());
-#endif
   } else {
     set_to_compiled(info.entry());
   }
@@ -660,13 +633,7 @@ void CompiledStaticCall::set(const StaticCallInfo& info) {
 void CompiledStaticCall::compute_entry(const methodHandle& m, bool caller_is_nmethod, StaticCallInfo& info) {
   CompiledMethod* m_code = m->code();
   info._callee = m;
-  if (m_code != NULL && m_code->is_in_use()) {
-    if (caller_is_nmethod && m_code->is_far_code()) {
-      // Call to far aot code from nmethod.
-      info._to_aot = true;
-    } else {
-      info._to_aot = false;
-    }
+  if (m_code != NULL && m_code->is_in_use() && !m_code->is_unloading()) {
     info._to_interpreter = false;
     info._entry  = m_code->verified_entry_point();
   } else {
@@ -678,18 +645,25 @@ void CompiledStaticCall::compute_entry(const methodHandle& m, bool caller_is_nme
   }
 }
 
-address CompiledDirectStaticCall::find_stub_for(address instruction, bool is_aot) {
+void CompiledStaticCall::compute_entry_for_continuation_entry(const methodHandle& m, StaticCallInfo& info) {
+  if (ContinuationEntry::is_interpreted_call(instruction_address())) {
+    info._to_interpreter = true;
+    info._entry = m()->get_c2i_entry();
+  }
+}
+
+address CompiledDirectStaticCall::find_stub_for(address instruction) {
   // Find reloc. information containing this call-site
   RelocIterator iter((nmethod*)NULL, instruction);
   while (iter.next()) {
     if (iter.addr() == instruction) {
       switch(iter.type()) {
         case relocInfo::static_call_type:
-          return iter.static_call_reloc()->static_stub(is_aot);
+          return iter.static_call_reloc()->static_stub();
         // We check here for opt_virtual_call_type, since we reuse the code
         // from the CompiledIC implementation
         case relocInfo::opt_virtual_call_type:
-          return iter.opt_virtual_call_reloc()->static_stub(is_aot);
+          return iter.opt_virtual_call_reloc()->static_stub();
         case relocInfo::poll_type:
         case relocInfo::poll_return_type: // A safepoint can't overlap a call.
         default:
@@ -700,8 +674,8 @@ address CompiledDirectStaticCall::find_stub_for(address instruction, bool is_aot
   return NULL;
 }
 
-address CompiledDirectStaticCall::find_stub(bool is_aot) {
-  return CompiledDirectStaticCall::find_stub_for(instruction_address(), is_aot);
+address CompiledDirectStaticCall::find_stub() {
+  return CompiledDirectStaticCall::find_stub_for(instruction_address());
 }
 
 address CompiledDirectStaticCall::resolve_call_stub() const {
@@ -734,8 +708,6 @@ void CompiledDirectStaticCall::print() {
     tty->print("clean");
   } else if (is_call_to_compiled()) {
     tty->print("compiled");
-  } else if (is_call_to_far()) {
-    tty->print("far");
   } else if (is_call_to_interpreted()) {
     tty->print("interpreted");
   }

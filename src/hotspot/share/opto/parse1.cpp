@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,7 @@
 #include "opto/parse.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
+#include "opto/type.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/safepointMechanism.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -151,7 +152,7 @@ Node* Parse::check_interpreter_type(Node* l, const Type* type,
 
   // TypeFlow may assert null-ness if a type appears unloaded.
   if (type == TypePtr::NULL_PTR ||
-      (tp != NULL && !tp->klass()->is_loaded())) {
+      (tp != NULL && !tp->is_loaded())) {
     // Value must be null, not a real oop.
     Node* chk = _gvn.transform( new CmpPNode(l, null()) );
     Node* tst = _gvn.transform( new BoolNode(chk, BoolTest::eq) );
@@ -167,10 +168,10 @@ Node* Parse::check_interpreter_type(Node* l, const Type* type,
   // When paths are cut off, values at later merge points can rise
   // toward more specific classes.  Make sure these specific classes
   // are still in effect.
-  if (tp != NULL && tp->klass() != C->env()->Object_klass()) {
+  if (tp != NULL && !tp->is_same_java_type_as(TypeInstPtr::BOTTOM)) {
     // TypeFlow asserted a specific object type.  Value must have that type.
     Node* bad_type_ctrl = NULL;
-    l = gen_checkcast(l, makecon(TypeKlassPtr::make(tp->klass())), &bad_type_ctrl);
+    l = gen_checkcast(l, makecon(tp->as_klass_type()->cast_to_exactness(true)), &bad_type_ctrl);
     bad_type_exit->control()->add_req(bad_type_ctrl);
   }
 
@@ -350,7 +351,7 @@ void Parse::load_interpreter_state(Node* osr_buf) {
       // case and aborts the compile if addresses are live into an OSR
       // entry point.  Because of that we can assume that any address
       // locals at the OSR entry point are dead.  Method liveness
-      // isn't precise enought to figure out that they are dead in all
+      // isn't precise enough to figure out that they are dead in all
       // cases so simply skip checking address locals all
       // together. Any type check is guaranteed to fail since the
       // interpreter type is the result of a load which might have any
@@ -422,6 +423,10 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
     C->set_has_reserved_stack_access(true);
   }
 
+  if (parse_method->is_synchronized()) {
+    C->set_has_monitors(true);
+  }
+
   _tf = TypeFunc::make(method());
   _iter.reset_to_method(method());
   _flow = method()->get_flow_analysis();
@@ -464,8 +469,9 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
   for (uint reason = 0; reason < md->trap_reason_limit(); reason++) {
     uint md_count = md->trap_count(reason);
     if (md_count != 0) {
-      if (md_count == md->trap_count_limit())
-        md_count += md->overflow_trap_count();
+      if (md_count >= md->trap_count_limit()) {
+        md_count = md->trap_count_limit() + md->overflow_trap_count();
+      }
       uint total_count = C->trap_count(reason);
       uint old_count   = total_count;
       total_count += md_count;
@@ -572,9 +578,6 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
   } else {
     set_map(entry_map);
     do_method_entry();
-    if (depth() == 1 && C->age_code()) {
-      decrement_age();
-    }
   }
 
   if (depth() == 1 && !failing()) {
@@ -792,7 +795,7 @@ void Parse::build_exits() {
     // becomes loaded during the subsequent parsing, the loaded and unloaded
     // types will not join when we transform and push in do_exits().
     const TypeOopPtr* ret_oop_type = ret_type->isa_oopptr();
-    if (ret_oop_type && !ret_oop_type->klass()->is_loaded()) {
+    if (ret_oop_type && !ret_oop_type->is_loaded()) {
       ret_type = TypeOopPtr::BOTTOM;
     }
     int         ret_size = type2size[ret_type->basic_type()];
@@ -1192,6 +1195,33 @@ void Parse::do_method_entry() {
     make_dtrace_method_entry(method());
   }
 
+#ifdef ASSERT
+  // Narrow receiver type when it is too broad for the method being parsed.
+  if (!method()->is_static()) {
+    ciInstanceKlass* callee_holder = method()->holder();
+    const Type* holder_type = TypeInstPtr::make(TypePtr::BotPTR, callee_holder, Type::trust_interfaces);
+
+    Node* receiver_obj = local(0);
+    const TypeInstPtr* receiver_type = _gvn.type(receiver_obj)->isa_instptr();
+
+    if (receiver_type != NULL && !receiver_type->higher_equal(holder_type)) {
+      // Receiver should always be a subtype of callee holder.
+      // But, since C2 type system doesn't properly track interfaces,
+      // the invariant can't be expressed in the type system for default methods.
+      // Example: for unrelated C <: I and D <: I, (C `meet` D) = Object </: I.
+      assert(callee_holder->is_interface(), "missing subtype check");
+
+      // Perform dynamic receiver subtype check against callee holder class w/ a halt on failure.
+      Node* holder_klass = _gvn.makecon(TypeKlassPtr::make(callee_holder, Type::trust_interfaces));
+      Node* not_subtype_ctrl = gen_subtype_check(receiver_obj, holder_klass);
+      assert(!stopped(), "not a subtype");
+
+      Node* halt = _gvn.transform(new HaltNode(not_subtype_ctrl, frameptr(), "failed receiver subtype check"));
+      C->root()->add_req(halt);
+    }
+  }
+#endif // ASSERT
+
   // If the method is synchronized, we need to construct a lock node, attach
   // it to the Start node, and pin it there.
   if (method()->is_synchronized()) {
@@ -1205,7 +1235,7 @@ void Parse::do_method_entry() {
 
     // Setup Object Pointer
     Node *lock_obj = NULL;
-    if(method()->is_static()) {
+    if (method()->is_static()) {
       ciInstance* mirror = _method->holder()->java_mirror();
       const TypeInstPtr *t_lock = TypeInstPtr::make(mirror);
       lock_obj = makecon(t_lock);
@@ -1416,7 +1446,7 @@ void Parse::BytecodeParseHistogram::print(float cutoff) {
   tty->print_cr("relative:  percentage contribution to compiled nodes");
   tty->print_cr("nodes   :  Average number of nodes constructed per bytecode");
   tty->print_cr("rnodes  :  Significance towards total nodes constructed, (nodes*relative)");
-  tty->print_cr("transforms: Average amount of tranform progress per bytecode compiled");
+  tty->print_cr("transforms: Average amount of transform progress per bytecode compiled");
   tty->print_cr("values  :  Average number of node values improved per bytecode");
   tty->print_cr("name    :  Bytecode name");
   tty->cr();
@@ -2032,9 +2062,9 @@ void Parse::call_register_finalizer() {
          "must have non-null instance type");
 
   const TypeInstPtr *tinst = receiver->bottom_type()->isa_instptr();
-  if (tinst != NULL && tinst->klass()->is_loaded() && !tinst->klass_is_exact()) {
+  if (tinst != NULL && tinst->is_loaded() && !tinst->klass_is_exact()) {
     // The type isn't known exactly so see if CHA tells us anything.
-    ciInstanceKlass* ik = tinst->klass()->as_instance_klass();
+    ciInstanceKlass* ik = tinst->instance_klass();
     if (!Dependencies::has_finalizable_subclass(ik)) {
       // No finalizable subclasses so skip the dynamic check.
       C->dependencies()->assert_has_no_finalizable_subclasses(ik);
@@ -2102,7 +2132,7 @@ void Parse::clinit_deopt() {
 
   set_parse_bci(0);
 
-  Node* holder = makecon(TypeKlassPtr::make(method()->holder()));
+  Node* holder = makecon(TypeKlassPtr::make(method()->holder(), Type::trust_interfaces));
   guard_klass_being_initialized(holder);
 }
 
@@ -2140,31 +2170,6 @@ void Parse::rtm_deopt() {
     }
   }
 #endif
-}
-
-void Parse::decrement_age() {
-  MethodCounters* mc = method()->ensure_method_counters();
-  if (mc == NULL) {
-    C->record_failure("Must have MCs");
-    return;
-  }
-  assert(!is_osr_parse(), "Not doing this for OSRs");
-
-  // Set starting bci for uncommon trap.
-  set_parse_bci(0);
-
-  const TypePtr* adr_type = TypeRawPtr::make((address)mc);
-  Node* mc_adr = makecon(adr_type);
-  Node* cnt_adr = basic_plus_adr(mc_adr, mc_adr, in_bytes(MethodCounters::nmethod_age_offset()));
-  Node* cnt = make_load(control(), cnt_adr, TypeInt::INT, T_INT, adr_type, MemNode::unordered);
-  Node* decr = _gvn.transform(new SubINode(cnt, makecon(TypeInt::ONE)));
-  store_to_memory(control(), cnt_adr, decr, T_INT, adr_type, MemNode::unordered);
-  Node *chk   = _gvn.transform(new CmpINode(decr, makecon(TypeInt::ZERO)));
-  Node* tst   = _gvn.transform(new BoolNode(chk, BoolTest::gt));
-  { BuildCutout unless(this, tst, PROB_ALWAYS);
-    uncommon_trap(Deoptimization::Reason_tenured,
-                  Deoptimization::Action_make_not_entrant);
-  }
 }
 
 //------------------------------return_current---------------------------------
@@ -2206,27 +2211,6 @@ void Parse::return_current(Node* value) {
     // cast from oop to interface allowed by the Verifier.  Make it explicit
     // here.
     Node* phi = _exits.argument(0);
-    const TypeInstPtr *tr = phi->bottom_type()->isa_instptr();
-    if (tr && tr->klass()->is_loaded() &&
-        tr->klass()->is_interface()) {
-      const TypeInstPtr *tp = value->bottom_type()->isa_instptr();
-      if (tp && tp->klass()->is_loaded() &&
-          !tp->klass()->is_interface()) {
-        // sharpen the type eagerly; this eases certain assert checking
-        if (tp->higher_equal(TypeInstPtr::NOTNULL))
-          tr = tr->join_speculative(TypeInstPtr::NOTNULL)->is_instptr();
-        value = _gvn.transform(new CheckCastPPNode(0, value, tr));
-      }
-    } else {
-      // Also handle returns of oop-arrays to an arrays-of-interface return
-      const TypeInstPtr* phi_tip;
-      const TypeInstPtr* val_tip;
-      Type::get_arrays_base_elements(phi->bottom_type(), value->bottom_type(), &phi_tip, &val_tip);
-      if (phi_tip != NULL && phi_tip->is_loaded() && phi_tip->klass()->is_interface() &&
-          val_tip != NULL && val_tip->is_loaded() && !val_tip->klass()->is_interface()) {
-        value = _gvn.transform(new CheckCastPPNode(0, value, phi->bottom_type()));
-      }
-    }
     phi->add_req(value);
   }
 
@@ -2279,7 +2263,7 @@ void Parse::add_safepoint() {
   // Create a node for the polling address
   Node *polladr;
   Node *thread = _gvn.transform(new ThreadLocalNode());
-  Node *polling_page_load_addr = _gvn.transform(basic_plus_adr(top(), thread, in_bytes(Thread::polling_page_offset())));
+  Node *polling_page_load_addr = _gvn.transform(basic_plus_adr(top(), thread, in_bytes(JavaThread::polling_page_offset())));
   polladr = make_load(control(), polling_page_load_addr, TypeRawPtr::BOTTOM, T_ADDRESS, Compile::AliasIdxRaw, MemNode::unordered);
   sfpnt->init_req(TypeFunc::Parms+0, _gvn.transform(polladr));
 
@@ -2290,7 +2274,7 @@ void Parse::add_safepoint() {
 
   // Provide an edge from root to safepoint.  This makes the safepoint
   // appear useful until the parse has completed.
-  if( OptoRemoveUseless && transformed_sfpnt->is_SafePoint() ) {
+  if (transformed_sfpnt->is_SafePoint()) {
     assert(C->root() != NULL, "Expect parse is still valid");
     C->root()->add_prec(transformed_sfpnt);
   }

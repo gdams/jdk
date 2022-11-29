@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -183,10 +183,10 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
         // performance and compatibility issues, so allow this feature
         // to be switched off either at runtime or programmatically
         //
+        @SuppressWarnings("removal")
         String systemFonts = java.security.AccessController.doPrivileged(
                new GetPropertyAction("swing.useSystemFontSettings"));
-        useSystemFontSettings = (systemFonts == null ||
-                                 Boolean.valueOf(systemFonts).booleanValue());
+        useSystemFontSettings = systemFonts == null || Boolean.parseBoolean(systemFonts);
 
         if (useSystemFontSettings) {
             Object value = UIManager.get("Application.useSystemFontSettings");
@@ -326,7 +326,7 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
         LazyValue dialogBold12 = t -> new FontUIResource(Font.DIALOG, Font.BOLD, 12);
 
         // *** Colors
-        // XXX - some of these doens't seem to be used
+        // XXX - some of these doesn't seem to be used
         ColorUIResource red = new ColorUIResource(Color.red);
         ColorUIResource black = new ColorUIResource(Color.black);
         ColorUIResource white = new ColorUIResource(Color.white);
@@ -592,16 +592,19 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
 
 
         if (!(this instanceof WindowsClassicLookAndFeel) &&
-            (OSInfo.getOSType() == OSInfo.OSType.WINDOWS &&
-             OSInfo.getWindowsVersion().compareTo(OSInfo.WINDOWS_XP) >= 0) &&
-            AccessController.doPrivileged(new GetPropertyAction("swing.noxp")) == null) {
+                (OSInfo.getOSType() == OSInfo.OSType.WINDOWS &&
+                OSInfo.getWindowsVersion().compareTo(OSInfo.WINDOWS_XP) >= 0)) {
+            @SuppressWarnings("removal")
+            String prop = AccessController.doPrivileged(new GetPropertyAction("swing.noxp"));
+            if (prop == null) {
 
-            // These desktop properties are not used directly, but are needed to
-            // trigger realoading of UI's.
-            this.themeActive = new TriggerDesktopProperty("win.xpstyle.themeActive");
-            this.dllName     = new TriggerDesktopProperty("win.xpstyle.dllName");
-            this.colorName   = new TriggerDesktopProperty("win.xpstyle.colorName");
-            this.sizeName    = new TriggerDesktopProperty("win.xpstyle.sizeName");
+                // These desktop properties are not used directly, but are needed to
+                // trigger realoading of UI's.
+                this.themeActive = new TriggerDesktopProperty("win.xpstyle.themeActive");
+                this.dllName = new TriggerDesktopProperty("win.xpstyle.dllName");
+                this.colorName = new TriggerDesktopProperty("win.xpstyle.colorName");
+                this.sizeName = new TriggerDesktopProperty("win.xpstyle.sizeName");
+            }
         }
 
 
@@ -642,7 +645,7 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
             "Button.dashedRectGapHeight", new XPValue(Integer.valueOf(6), Integer.valueOf(8)),
             "Button.textShiftOffset", new XPValue(Integer.valueOf(0),
                                                   Integer.valueOf(1)),
-            // W2K keyboard navigation hidding.
+            // W2K keyboard navigation hiding.
             "Button.showMnemonics", showMnemonics,
             "Button.focusInputMap",
                new UIDefaults.LazyInputMap(new Object[] {
@@ -2110,7 +2113,7 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
      * Gets an <code>Icon</code> from the native libraries if available.
      * A desktop property is used to trigger reloading the icon when needed.
      */
-    private class ActiveWindowsIcon implements UIDefaults.ActiveValue {
+    private static class ActiveWindowsIcon implements UIDefaults.ActiveValue {
         private Icon icon;
         private String nativeImageName;
         private String fallbackName;
@@ -2416,7 +2419,7 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
         }
     }
 
-    private class TriggerDesktopProperty extends WindowsDesktopProperty {
+    private static class TriggerDesktopProperty extends WindowsDesktopProperty {
         TriggerDesktopProperty(String key) {
             super(key, null);
             // This call adds a property change listener for the property,
@@ -2428,12 +2431,12 @@ public class WindowsLookAndFeel extends BasicLookAndFeel
         protected void updateUI() {
             super.updateUI();
 
-            // Make sure property change listener is readded each time
+            // Make sure property change listener is re-added each time
             getValueFromDesktop();
         }
     }
 
-    private class FontDesktopProperty extends TriggerDesktopProperty {
+    private static class FontDesktopProperty extends TriggerDesktopProperty {
         FontDesktopProperty(String key) {
             super(key);
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -69,6 +69,7 @@ class InterpreterOopMap;
 class Method : public Metadata {
  friend class VMStructs;
  friend class JVMCIVMStructs;
+ friend class MethodTest;
  private:
   // If you add a new field that points to any metaspace object, you
   // must add this field to Method::metaspace_pointers_do().
@@ -83,15 +84,16 @@ class Method : public Metadata {
 
   // Flags
   enum Flags {
-    _caller_sensitive      = 1 << 0,
-    _force_inline          = 1 << 1,
-    _dont_inline           = 1 << 2,
-    _hidden                = 1 << 3,
-    _has_injected_profile  = 1 << 4,
-    _running_emcp          = 1 << 5,
-    _intrinsic_candidate   = 1 << 6,
-    _reserved_stack_access = 1 << 7,
-    _scoped                = 1 << 8
+    _caller_sensitive       = 1 << 0,
+    _force_inline           = 1 << 1,
+    _dont_inline            = 1 << 2,
+    _hidden                 = 1 << 3,
+    _has_injected_profile   = 1 << 4,
+    _intrinsic_candidate    = 1 << 5,
+    _reserved_stack_access  = 1 << 6,
+    _scoped                 = 1 << 7,
+    _changes_current_thread = 1 << 8,
+    _jvmti_mount_transition = 1 << 9,
   };
   mutable u2 _flags;
 
@@ -99,6 +101,8 @@ class Method : public Metadata {
 
 #ifndef PRODUCT
   int64_t _compiled_invocation_count;
+
+  Symbol* _name;
 #endif
   // Entry point for calling both from and to the interpreter.
   address _i2i_entry;           // All-args-on-stack calling convention
@@ -113,12 +117,8 @@ class Method : public Metadata {
   CompiledMethod* volatile _code;                       // Points to the corresponding piece of native code
   volatile address           _from_interpreted_entry; // Cache of _code ? _adapter->i2c_entry() : _i2i_entry
 
-#if INCLUDE_AOT
-  CompiledMethod* _aot_code;
-#endif
-
   // Constructor
-  Method(ConstMethod* xconst, AccessFlags access_flags);
+  Method(ConstMethod* xconst, AccessFlags access_flags, Symbol* name);
  public:
 
   static Method* allocate(ClassLoaderData* loader_data,
@@ -126,6 +126,7 @@ class Method : public Metadata {
                           AccessFlags access_flags,
                           InlineTableSizes* sizes,
                           ConstMethod::MethodType method_type,
+                          Symbol* name,
                           TRAPS);
 
   // CDS and vtbl checking can create an empty Method to get vtbl pointer.
@@ -133,7 +134,10 @@ class Method : public Metadata {
 
   virtual bool is_method() const { return true; }
 
+#if INCLUDE_CDS
+  void remove_unshareable_info();
   void restore_unshareable_info(TRAPS);
+#endif
 
   // accessors for instance variables
 
@@ -143,7 +147,6 @@ class Method : public Metadata {
 
   static address make_adapters(const methodHandle& mh, TRAPS);
   address from_compiled_entry() const;
-  address from_compiled_entry_no_trampoline() const;
   address from_interpreted_entry() const;
 
   // access flag
@@ -403,33 +406,13 @@ class Method : public Metadata {
     }
   }
 
-#if INCLUDE_AOT
-  void set_aot_code(CompiledMethod* aot_code) {
-    _aot_code = aot_code;
-  }
-
-  CompiledMethod* aot_code() const {
-    return _aot_code;
-  }
-#else
-  CompiledMethod* aot_code() const { return NULL; }
-#endif // INCLUDE_AOT
-
-  int nmethod_age() const {
-    if (method_counters() == NULL) {
-      return INT_MAX;
-    } else {
-      return method_counters()->nmethod_age();
-    }
-  }
-
   int invocation_count() const;
   int backedge_count() const;
 
   bool was_executed_more_than(int n);
   bool was_never_executed()                     { return !was_executed_more_than(0);  }
 
-  static void build_interpreter_method_data(const methodHandle& method, TRAPS);
+  static void build_profiling_method_data(const methodHandle& method, TRAPS);
 
   static MethodCounters* build_method_counters(Thread* current, Method* m);
 
@@ -442,10 +425,6 @@ class Method : public Metadata {
   // for PrintMethodData in a product build
   int64_t  compiled_invocation_count() const    { return 0; }
 #endif // not PRODUCT
-
-  // Clear (non-shared space) pointers which could not be relevant
-  // if this (shared) method were mapped into another JVM.
-  void remove_unshareable_info();
 
   // nmethod/verified compiler entry
   address verified_code_entry();
@@ -481,6 +460,9 @@ public:
   void link_method(const methodHandle& method, TRAPS);
   // clear entry points. Used by sharing code during dump time
   void unlink_method() NOT_CDS_RETURN;
+
+  // the number of argument reg slots that the compiled method uses on the stack.
+  int num_stack_arg_slots() const { return constMethod()->num_stack_arg_slots(); }
 
   virtual void metaspace_pointers_do(MetaspaceClosure* iter);
   virtual MetaspaceObj::Type type() const { return MethodType; }
@@ -546,9 +528,9 @@ public:
   bool    contains(address bcp) const { return constMethod()->contains(bcp); }
 
   // prints byte codes
-  void print_codes() const            { print_codes_on(tty); }
-  void print_codes_on(outputStream* st) const;
-  void print_codes_on(int from, int to, outputStream* st) const;
+  void print_codes(int flags = 0) const { print_codes_on(tty, flags); }
+  void print_codes_on(outputStream* st, int flags = 0) const;
+  void print_codes_on(int from, int to, outputStream* st, int flags = 0) const;
 
   // method parameters
   bool has_method_parameters() const
@@ -598,7 +580,6 @@ public:
   bool is_synchronized() const                   { return access_flags().is_synchronized();}
   bool is_native() const                         { return access_flags().is_native();      }
   bool is_abstract() const                       { return access_flags().is_abstract();    }
-  bool is_strict() const                         { return access_flags().is_strict();      }
   bool is_synthetic() const                      { return access_flags().is_synthetic();   }
 
   // returns true if contains only return operation
@@ -617,6 +598,9 @@ public:
   bool can_be_statically_bound() const;
   bool can_be_statically_bound(InstanceKlass* context) const;
   bool can_be_statically_bound(AccessFlags class_access_flags) const;
+
+  // true if method can omit stack trace in throw in compiled code.
+  bool can_omit_stack_trace();
 
   // returns true if the method has any backward branches.
   bool has_loops() {
@@ -674,8 +658,6 @@ public:
   // simultaneously. Use with caution.
   bool has_compiled_code() const;
 
-  bool has_aot_code() const                      { return aot_code() != NULL; }
-
   bool needs_clinit_barrier() const;
 
   // sizing
@@ -684,7 +666,7 @@ public:
   }
   static int size(bool is_native);
   int size() const                               { return method_size(); }
-  void log_touched(TRAPS);
+  void log_touched(Thread* current);
   static void print_touched_methods(outputStream* out);
 
   // interpreter support
@@ -740,6 +722,14 @@ public:
   static methodHandle make_method_handle_intrinsic(vmIntrinsicID iid, // _invokeBasic, _linkToVirtual
                                                    Symbol* signature, //anything at all
                                                    TRAPS);
+
+
+  // Continuation
+  inline bool is_continuation_enter_intrinsic() const;
+  inline bool is_continuation_yield_intrinsic() const;
+  inline bool is_continuation_native_intrinsic() const;
+  inline bool is_special_native_intrinsic() const;
+
   static Klass* check_non_bcp_klass(Klass* klass);
 
   enum {
@@ -761,22 +751,10 @@ public:
   bool is_deleted() const                           { return access_flags().is_deleted(); }
   void set_is_deleted()                             { _access_flags.set_is_deleted(); }
 
-  bool is_running_emcp() const {
-    // EMCP methods are old but not obsolete or deleted. Equivalent
-    // Modulo Constant Pool means the method is equivalent except
-    // the constant pool and instructions that access the constant
-    // pool might be different.
-    // If a breakpoint is set in a redefined method, its EMCP methods that are
-    // still running must have a breakpoint also.
-    return (_flags & _running_emcp) != 0;
-  }
-
-  void set_running_emcp(bool x) {
-    _flags = x ? (_flags | _running_emcp) : (_flags & ~_running_emcp);
-  }
-
   bool on_stack() const                             { return access_flags().on_stack(); }
   void set_on_stack(const bool value);
+
+  void record_gc_epoch();
 
   // see the definition in Method*.cpp for the gory details
   bool should_not_be_cached() const;
@@ -860,6 +838,20 @@ public:
   }
   void set_dont_inline(bool x) {
     _flags = x ? (_flags | _dont_inline) : (_flags & ~_dont_inline);
+  }
+
+  bool changes_current_thread() {
+    return (_flags & _changes_current_thread) != 0;
+  }
+  void set_changes_current_thread(bool x) {
+    _flags = x ? (_flags | _changes_current_thread) : (_flags & ~_changes_current_thread);
+  }
+
+  bool jvmti_mount_transition() {
+    return (_flags & _jvmti_mount_transition) != 0;
+  }
+  void set_jvmti_mount_transition(bool x) {
+    _flags = x ? (_flags | _jvmti_mount_transition) : (_flags & ~_jvmti_mount_transition);
   }
 
   bool is_hidden() const {
@@ -972,15 +964,12 @@ public:
   // Resolve all classes in signature, return 'true' if successful
   static bool load_signature_classes(const methodHandle& m, TRAPS);
 
-  // Return if true if not all classes references in signature, including return type, has been loaded
-  static bool has_unloaded_classes_in_signature(const methodHandle& m, TRAPS);
-
   // Printing
-  void print_short_name(outputStream* st = tty); // prints as klassname::methodname; Exposed so field engineers can debug VM
+  void print_short_name(outputStream* st = tty) const; // prints as klassname::methodname; Exposed so field engineers can debug VM
 #if INCLUDE_JVMTI
-  void print_name(outputStream* st = tty); // prints as "virtual void foo(int)"; exposed for -Xlog:redefine+class
+  void print_name(outputStream* st = tty) const; // prints as "virtual void foo(int)"; exposed for -Xlog:redefine+class
 #else
-  void print_name(outputStream* st = tty)        PRODUCT_RETURN; // prints as "virtual void foo(int)"
+  void print_name(outputStream* st = tty) const  PRODUCT_RETURN; // prints as "virtual void foo(int)"
 #endif
 
   typedef int (*method_comparator_func)(Method* a, Method* b);
@@ -1024,6 +1013,8 @@ public:
   // Inlined elements
   address* native_function_addr() const          { assert(is_native(), "must be native"); return (address*) (this+1); }
   address* signature_handler_addr() const        { return native_function_addr() + 1; }
+
+  void set_num_stack_arg_slots(int n) { constMethod()->set_num_stack_arg_slots(n); }
 };
 
 

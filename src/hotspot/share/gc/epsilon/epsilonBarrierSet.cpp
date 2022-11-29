@@ -23,11 +23,11 @@
  */
 
 #include "precompiled.hpp"
-#include "runtime/thread.hpp"
 #include "gc/epsilon/epsilonBarrierSet.hpp"
 #include "gc/epsilon/epsilonThreadLocalData.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
+#include "runtime/javaThread.hpp"
 #ifdef COMPILER1
 #include "gc/shared/c1/barrierSetC1.hpp"
 #endif

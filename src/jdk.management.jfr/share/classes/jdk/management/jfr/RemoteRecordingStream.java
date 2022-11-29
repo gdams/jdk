@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,9 +27,11 @@ package jdk.management.jfr;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.time.Duration;
@@ -40,6 +42,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
 import java.security.AccessControlException;
 import javax.management.JMX;
@@ -50,11 +53,14 @@ import jdk.jfr.Configuration;
 import jdk.jfr.EventSettings;
 import jdk.jfr.EventType;
 import jdk.jfr.Recording;
+import jdk.jfr.RecordingState;
 import jdk.jfr.consumer.EventStream;
 import jdk.jfr.consumer.MetadataEvent;
 import jdk.jfr.consumer.RecordedEvent;
+import jdk.jfr.consumer.RecordingStream;
 import jdk.jfr.internal.management.EventSettingsModifier;
 import jdk.jfr.internal.management.ManagementSupport;
+import jdk.management.jfr.DiskRepository.DiskChunk;
 import jdk.jfr.internal.management.EventByteStream;
 
 /**
@@ -142,12 +148,18 @@ public final class RemoteRecordingStream implements EventStream {
     final FlightRecorderMXBean mbean;
     final long recordingId;
     final EventStream stream;
+    @SuppressWarnings("removal")
     final AccessControlContext accessControllerContext;
     final DiskRepository repository;
     final Instant creationTime;
+    final Object lock = new Object();
     volatile Instant startTime;
     volatile Instant endTime;
     volatile boolean closed;
+    // always guarded by lock
+    private boolean started;
+    private Duration maxAge;
+    private long maxSize;
 
     /**
      * Creates an event stream that operates against a {@link MBeanServerConnection}
@@ -196,6 +208,7 @@ public final class RemoteRecordingStream implements EventStream {
         this(connection, directory, false);
     }
 
+    @SuppressWarnings("removal")
     private RemoteRecordingStream(MBeanServerConnection connection, Path dir, boolean delete) throws IOException {
         Objects.requireNonNull(connection);
         Objects.requireNonNull(dir);
@@ -405,7 +418,11 @@ public final class RemoteRecordingStream implements EventStream {
      */
     public void setMaxAge(Duration maxAge) {
         Objects.requireNonNull(maxAge);
-        repository.setMaxAge(maxAge);
+        synchronized (lock) {
+            repository.setMaxAge(maxAge);
+            this.maxAge = maxAge;
+            updateOnCompleteHandler();
+        }
     }
 
     /**
@@ -431,7 +448,11 @@ public final class RemoteRecordingStream implements EventStream {
         if (maxSize < 0) {
             throw new IllegalArgumentException("Max size of recording can't be negative");
         }
-        repository.setMaxSize(maxSize);
+        synchronized (lock) {
+            repository.setMaxSize(maxSize);
+            this.maxSize = maxSize;
+            updateOnCompleteHandler();
+        }
     }
 
     @Override
@@ -461,10 +482,12 @@ public final class RemoteRecordingStream implements EventStream {
 
     @Override
     public void close() {
-        if (closed) {
-            return;
+        synchronized (lock) { // ensure one closer
+            if (closed) {
+                return;
+            }
+            closed = true;
         }
-        closed = true;
         ManagementSupport.setOnChunkCompleteHandler(stream, null);
         stream.close();
         try {
@@ -508,6 +531,7 @@ public final class RemoteRecordingStream implements EventStream {
 
     @Override
     public void start() {
+        ensureStartable();
         try {
             try {
                 mbean.startRecording(recordingId);
@@ -525,6 +549,7 @@ public final class RemoteRecordingStream implements EventStream {
 
     @Override
     public void startAsync() {
+        ensureStartable();
         stream.startAsync();
         try {
             mbean.startRecording(recordingId);
@@ -533,6 +558,88 @@ public final class RemoteRecordingStream implements EventStream {
             ManagementSupport.logDebug(e.getMessage());
             close();
         }
+    }
+
+    private void ensureStartable() {
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Event stream is closed");
+            }
+            if (started) {
+                throw new IllegalStateException("Event stream can only be started once");
+            }
+            started = true;
+        }
+    }
+
+    /**
+     * Writes recording data to a file.
+     * <p>
+     * The recording stream must be started, but not closed.
+     * <p>
+     * It's highly recommended that a max age or max size is set before
+     * starting the stream. Otherwise, the dump may not contain any events.
+     *
+     * @param destination the location where recording data is written, not
+     *        {@code null}
+     *
+     * @throws IOException if the recording data can't be copied to the specified
+     *         location, or if the stream is closed, or not started.
+     *
+     * @throws SecurityException if a security manager exists and the caller doesn't
+     *         have {@code FilePermission} to write to the destination path
+     *
+     * @see RemoteRecordingStream#setMaxAge(Duration)
+     * @see RemoteRecordingStream#setMaxSize(long)
+     *
+     * @since 17
+     */
+    public void dump(Path destination) throws IOException {
+        Objects.requireNonNull(destination);
+        long id = -1;
+        try {
+            FileDump fileDump;
+            synchronized (lock) { // ensure running state while preparing dump
+                if (closed) {
+                    throw new IOException("Recording stream has been closed, no content to write");
+                }
+                if (!started) {
+                    throw new IOException("Recording stream has not been started, no content to write");
+                }
+                // Take repository lock to prevent new data to be flushed
+                // client-side after clone has been created on the server.
+                synchronized (repository) {
+                    id = mbean.cloneRecording(recordingId, true);
+                    RecordingInfo ri = getRecordingInfo(mbean.getRecordings(), id);
+                    fileDump = repository.newDump(ri.getStopTime());
+                }
+            }
+            // Write outside lock
+            fileDump.write(destination);
+        } catch (IOException ioe) {
+            throw ioe;
+        } catch (Exception e) {
+            ManagementSupport.logDebug(e.getMessage());
+            close();
+        } finally {
+            if (id != -1) {
+                try {
+                    mbean.closeRecording(id);
+                } catch (Exception e) {
+                    ManagementSupport.logDebug(e.getMessage());
+                    close();
+                }
+            }
+        }
+    }
+
+    private RecordingInfo getRecordingInfo(List<RecordingInfo> infos, long id) throws IOException {
+        for (RecordingInfo info : infos) {
+            if (info.getId() == id) {
+                return info;
+            }
+        }
+        throw new IOException("Unable to find id of dumped recording");
     }
 
     @Override
@@ -547,6 +654,15 @@ public final class RemoteRecordingStream implements EventStream {
 
     private static Path makeTempDirectory() throws IOException {
         return Files.createTempDirectory("jfr-streaming");
+    }
+
+    private void updateOnCompleteHandler() {
+        if (maxAge != null || maxSize != 0) {
+            // User has set a chunk removal policy
+            ManagementSupport.setOnChunkCompleteHandler(stream, null);
+        } else {
+            ManagementSupport.setOnChunkCompleteHandler(stream, new ChunkConsumer(repository));
+        }
     }
 
     private void startDownload() {

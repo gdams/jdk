@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,13 +25,18 @@
 
 #ifdef LINUX
 
-#include <sys/mman.h>
-
+#include "os_linux.hpp"
+#include "prims/jniCheck.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/os.hpp"
 #include "utilities/align.hpp"
+#include "utilities/decoder.hpp"
 #include "concurrentTestRunner.inline.hpp"
+#include "testutils.hpp"
 #include "unittest.hpp"
+
+#include <sys/mman.h>
+
 
 namespace {
   static void small_page_write(void* addr, size_t size) {
@@ -47,8 +52,8 @@ namespace {
     char* const _ptr;
     const size_t _size;
    public:
-    static char* reserve_memory_special_huge_tlbfs(size_t bytes, size_t alignment, char* req_addr, bool exec) {
-      return os::Linux::reserve_memory_special_huge_tlbfs(bytes, alignment, req_addr, exec);
+    static char* reserve_memory_special_huge_tlbfs(size_t bytes, size_t alignment, size_t page_size, char* req_addr, bool exec) {
+      return os::Linux::reserve_memory_special_huge_tlbfs(bytes, alignment, page_size, req_addr, exec);
     }
     HugeTlbfsMemory(char* const ptr, size_t size) : _ptr(ptr), _size(size) { }
     ~HugeTlbfsMemory() {
@@ -100,7 +105,7 @@ TEST_VM(os_linux, reserve_memory_special_huge_tlbfs_size_aligned) {
   size_t lp = os::large_page_size();
 
   for (size_t size = lp; size <= lp * 10; size += lp) {
-    char* addr = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, lp, NULL, false);
+    char* addr = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, lp, lp, NULL, false);
 
     if (addr != NULL) {
       HugeTlbfsMemory mr(addr, size);
@@ -126,7 +131,7 @@ TEST_VM(os_linux, reserve_memory_special_huge_tlbfs_size_not_aligned_without_add
   for (int i = 0; i < num_sizes; i++) {
     const size_t size = sizes[i];
     for (size_t alignment = ag; is_size_aligned(size, alignment); alignment *= 2) {
-      char* p = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, alignment, NULL, false);
+      char* p = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, alignment, lp, NULL, false);
       if (p != NULL) {
         HugeTlbfsMemory mr(p, size);
         EXPECT_PRED2(is_ptr_aligned, p, alignment) << " size = " << size;
@@ -166,7 +171,7 @@ TEST_VM(os_linux, reserve_memory_special_huge_tlbfs_size_not_aligned_with_good_r
     for (size_t alignment = ag; is_size_aligned(size, alignment); alignment *= 2) {
       // req_addr must be at least large page aligned.
       char* const req_addr = align_up(mapping, MAX2(alignment, lp));
-      char* p = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, alignment, req_addr, false);
+      char* p = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, alignment, lp, req_addr, false);
       if (p != NULL) {
         HugeTlbfsMemory mr(p, size);
         ASSERT_EQ(req_addr, p) << " size = " << size << ", alignment = " << alignment;
@@ -216,7 +221,7 @@ TEST_VM(os_linux, reserve_memory_special_huge_tlbfs_size_not_aligned_with_bad_re
     for (size_t alignment = ag; is_size_aligned(size, alignment); alignment *= 2) {
       // req_addr must be at least large page aligned.
       char* const req_addr = align_up(mapping, MAX2(alignment, lp));
-      char* p = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, alignment, req_addr, false);
+      char* p = HugeTlbfsMemory::reserve_memory_special_huge_tlbfs(size, alignment, lp, req_addr, false);
       HugeTlbfsMemory mr(p, size);
       // as the area around req_addr contains already existing mappings, the API should always
       // return NULL (as per contract, it cannot return another address)
@@ -253,12 +258,12 @@ class TestReserveMemorySpecial : AllStatic {
     }
   }
 
-  static void test_reserve_memory_special_huge_tlbfs_size_aligned(size_t size, size_t alignment) {
+  static void test_reserve_memory_special_huge_tlbfs_size_aligned(size_t size, size_t alignment, size_t page_size) {
     if (!UseHugeTLBFS) {
       return;
     }
 
-    char* addr = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, NULL, false);
+    char* addr = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, page_size, NULL, false);
 
     if (addr != NULL) {
       small_page_write(addr, size);
@@ -275,7 +280,7 @@ class TestReserveMemorySpecial : AllStatic {
     size_t lp = os::large_page_size();
 
     for (size_t size = lp; size <= lp * 10; size += lp) {
-      test_reserve_memory_special_huge_tlbfs_size_aligned(size, lp);
+      test_reserve_memory_special_huge_tlbfs_size_aligned(size, lp, lp);
     }
   }
 
@@ -319,7 +324,7 @@ class TestReserveMemorySpecial : AllStatic {
     for (int i = 0; i < num_sizes; i++) {
       const size_t size = sizes[i];
       for (size_t alignment = ag; is_aligned(size, alignment); alignment *= 2) {
-        char* p = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, NULL, false);
+        char* p = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, lp, NULL, false);
         if (p != NULL) {
           EXPECT_TRUE(is_aligned(p, alignment));
           small_page_write(p, size);
@@ -334,7 +339,7 @@ class TestReserveMemorySpecial : AllStatic {
       for (size_t alignment = ag; is_aligned(size, alignment); alignment *= 2) {
         // req_addr must be at least large page aligned.
         char* const req_addr = align_up(mapping1, MAX2(alignment, lp));
-        char* p = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, req_addr, false);
+        char* p = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, lp, req_addr, false);
         if (p != NULL) {
           EXPECT_EQ(p, req_addr);
           small_page_write(p, size);
@@ -349,7 +354,7 @@ class TestReserveMemorySpecial : AllStatic {
       for (size_t alignment = ag; is_aligned(size, alignment); alignment *= 2) {
         // req_addr must be at least large page aligned.
         char* const req_addr = align_up(mapping2, MAX2(alignment, lp));
-        char* p = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, req_addr, false);
+        char* p = os::Linux::reserve_memory_special_huge_tlbfs(size, alignment, lp, req_addr, false);
         // as the area around req_addr contains already existing mappings, the API should always
         // return NULL (as per contract, it cannot return another address)
         EXPECT_TRUE(p == NULL);
@@ -415,9 +420,94 @@ public:
 };
 
 TEST_VM(os_linux, reserve_memory_special_concurrent) {
-  ReserveMemorySpecialRunnable runnable;
-  ConcurrentTestRunner testRunner(&runnable, 30, 15000);
-  testRunner.run();
+  if (UseLargePages) {
+    ReserveMemorySpecialRunnable runnable;
+    ConcurrentTestRunner testRunner(&runnable, 5, 3000);
+    testRunner.run();
+  }
 }
 
-#endif
+// Check that method JNI_CreateJavaVM is found.
+TEST(os_linux, addr_to_function_valid) {
+  char buf[128] = "";
+  int offset = -1;
+  address valid_function_pointer = (address)JNI_CreateJavaVM;
+  ASSERT_TRUE(os::dll_address_to_function_name(valid_function_pointer, buf, sizeof(buf), &offset, true));
+  ASSERT_TRUE(strstr(buf, "JNI_CreateJavaVM") != nullptr);
+  ASSERT_TRUE(offset >= 0);
+}
+
+#if !defined(__clang_major__) || (__clang_major__ >= 5) // DWARF does not support Clang versions older than 5.0.
+// Test valid address of method ReportJNIFatalError in jniCheck.hpp. We should get "jniCheck.hpp" in the buffer and a valid line number.
+TEST_VM(os_linux, decoder_get_source_info_valid) {
+  char buf[128] = "";
+  int line = -1;
+  address valid_function_pointer = (address)ReportJNIFatalError;
+  ASSERT_TRUE(Decoder::get_source_info(valid_function_pointer, buf, sizeof(buf), &line));
+  ASSERT_TRUE(strcmp(buf, "jniCheck.hpp") == 0);
+  ASSERT_TRUE(line > 0);
+}
+
+// Test invalid addresses. Should not cause harm and output buffer and line must contain "" and -1, respectively.
+TEST_VM(os_linux, decoder_get_source_info_invalid) {
+  char buf[128] = "";
+  int line = -1;
+  address invalid_function_pointers[] = { nullptr, (address)1, (address)&line };
+
+  for (address addr : invalid_function_pointers) {
+    strcpy(buf, "somestring");
+    line = 12;
+    // We should return false but do not crash or fail in any way.
+    ASSERT_FALSE(Decoder::get_source_info(addr, buf, sizeof(buf), &line));
+    ASSERT_TRUE(buf[0] == '\0'); // Should contain "" on error
+    ASSERT_TRUE(line == -1); // Should contain -1 on error
+  }
+}
+
+// Test with valid address but a too small buffer to store the entire filename. Should find generic <OVERFLOW> message
+// and a valid line number.
+TEST_VM(os_linux, decoder_get_source_info_valid_overflow) {
+  char buf[11] = "";
+  int line = -1;
+  address valid_function_pointer = (address)ReportJNIFatalError;
+  ASSERT_TRUE(Decoder::get_source_info(valid_function_pointer, buf, 11, &line));
+  ASSERT_TRUE(strcmp(buf, "<OVERFLOW>") == 0);
+  ASSERT_TRUE(line > 0);
+}
+
+// Test with valid address but a too small buffer that can neither store the entire filename nor the generic <OVERFLOW>
+// message. We should find "L" as filename and a valid line number.
+TEST_VM(os_linux, decoder_get_source_info_valid_overflow_minimal) {
+  char buf[2] = "";
+  int line = -1;
+  address valid_function_pointer = (address)ReportJNIFatalError;
+  ASSERT_TRUE(Decoder::get_source_info(valid_function_pointer, buf, 2, &line));
+  ASSERT_TRUE(strcmp(buf, "L") == 0); // Overflow message does not fit, so we fall back to "L:line_number"
+  ASSERT_TRUE(line > 0); // Line should correctly be found and returned
+}
+#endif // clang
+
+#ifdef __GLIBC__
+TEST_VM(os_linux, glibc_mallinfo_wrapper) {
+  // Very basic test. Call it. That proves that resolution and invocation works.
+  os::Linux::glibc_mallinfo mi;
+  bool did_wrap = false;
+
+  os::Linux::get_mallinfo(&mi, &did_wrap);
+
+  void* p = os::malloc(2 * K, mtTest);
+  ASSERT_NOT_NULL(p);
+
+  // We should see total allocation values > 0
+  ASSERT_GE((mi.uordblks + mi.hblkhd), 2 * K);
+
+  // These values also should exceed some reasonable size.
+  ASSERT_LT(mi.fordblks, 2 * G);
+  ASSERT_LT(mi.uordblks, 2 * G);
+  ASSERT_LT(mi.hblkhd, 2 * G);
+
+  os::free(p);
+}
+#endif // __GLIBC__
+
+#endif // LINUX

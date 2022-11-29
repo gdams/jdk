@@ -161,7 +161,7 @@ void DCmdParser::add_dcmd_option(GenDCmdArgument* arg) {
     o->set_next(arg);
   }
   arg->set_next(NULL);
-  Thread* THREAD = Thread::current();
+  JavaThread* THREAD = JavaThread::current(); // For exception macros.
   arg->init_value(THREAD);
   if (HAS_PENDING_EXCEPTION) {
     fatal("Initialization must be successful");
@@ -180,7 +180,7 @@ void DCmdParser::add_dcmd_argument(GenDCmdArgument* arg) {
     a->set_next(arg);
   }
   arg->set_next(NULL);
-  Thread* THREAD = Thread::current();
+  JavaThread* THREAD = JavaThread::current(); // For exception macros.
   arg->init_value(THREAD);
   if (HAS_PENDING_EXCEPTION) {
     fatal("Initialization must be successful");
@@ -462,6 +462,11 @@ void DCmdFactory::send_notification_internal(TRAPS) {
   if (notif) {
 
     Klass* k = Management::com_sun_management_internal_DiagnosticCommandImpl_klass(CHECK);
+    if (k == nullptr) {
+      fatal("Should have the DiagnosticCommandImpl class");
+      return; // silence the compiler
+    }
+
     InstanceKlass* dcmd_mbean_klass = InstanceKlass::cast(k);
 
     JavaValue result(T_OBJECT);

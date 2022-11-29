@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,17 +24,18 @@
  */
 package sun.security.ssl;
 
-import javax.crypto.spec.DHParameterSpec;
-import javax.net.ssl.SSLException;
 import java.io.IOException;
 import java.security.*;
-import java.security.spec.*;
+import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.InvalidParameterSpecException;
+import java.security.spec.NamedParameterSpec;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import javax.crypto.KeyAgreement;
-import sun.security.ssl.DHKeyExchange.DHEPossession;
+import javax.crypto.spec.DHParameterSpec;
 import sun.security.ssl.ECDHKeyExchange.ECDHEPossession;
 import sun.security.util.CurveDB;
 
@@ -239,10 +240,10 @@ enum NamedGroup {
         Collections.unmodifiableSet(EnumSet.of(CryptoPrimitive.KEY_AGREEMENT));
 
     // Constructor used for all NamedGroup types
-    private NamedGroup(int id, String name,
-            NamedGroupSpec namedGroupSpec,
-            ProtocolVersion[] supportedProtocols,
-            AlgorithmParameterSpec keAlgParamSpec) {
+    NamedGroup(int id, String name,
+               NamedGroupSpec namedGroupSpec,
+               ProtocolVersion[] supportedProtocols,
+               AlgorithmParameterSpec keAlgParamSpec) {
         this.id = id;
         this.name = name;
         this.spec = namedGroupSpec;
@@ -419,12 +420,9 @@ enum NamedGroup {
         return spec.encodePossessionPublicKey(namedGroupPossession);
     }
 
-    SSLCredentials decodeCredentials(byte[] encoded,
-            AlgorithmConstraints constraints,
-            ExceptionSupplier onConstraintFail)
-            throws IOException, GeneralSecurityException {
-        return spec.decodeCredentials(
-                this, encoded, constraints, onConstraintFail);
+    SSLCredentials decodeCredentials(
+            byte[] encoded) throws IOException, GeneralSecurityException {
+        return spec.decodeCredentials(this, encoded);
     }
 
     SSLPossession createPossession(SecureRandom random) {
@@ -436,30 +434,13 @@ enum NamedGroup {
         return spec.createKeyDerivation(hc);
     }
 
-    interface ExceptionSupplier {
-        void apply(String s) throws SSLException;
-    }
-
     // A list of operations related to named groups.
     private interface NamedGroupScheme {
-        default void checkConstraints(PublicKey publicKey,
-                AlgorithmConstraints constraints,
-                ExceptionSupplier onConstraintFail) throws SSLException {
-            if (!constraints.permits(
-                    EnumSet.of(CryptoPrimitive.KEY_AGREEMENT), publicKey)) {
-                onConstraintFail.apply("key share entry does not "
-                        + "comply with algorithm constraints");
-            }
-        }
-
         byte[] encodePossessionPublicKey(
                 NamedGroupPossession namedGroupPossession);
 
-        SSLCredentials decodeCredentials(
-                NamedGroup ng, byte[] encoded,
-                AlgorithmConstraints constraints,
-                ExceptionSupplier onConstraintFail
-            ) throws IOException, GeneralSecurityException;
+        SSLCredentials decodeCredentials(NamedGroup ng,
+                byte[] encoded) throws IOException, GeneralSecurityException;
 
         SSLPossession createPossession(NamedGroup ng, SecureRandom random);
 
@@ -486,7 +467,7 @@ enum NamedGroup {
         private final String algorithm;     // key exchange name
         private final NamedGroupScheme scheme;  // named group operations
 
-        private NamedGroupSpec(String algorithm, NamedGroupScheme scheme) {
+        NamedGroupSpec(String algorithm, NamedGroupScheme scheme) {
             this.algorithm = algorithm;
             this.scheme = scheme;
         }
@@ -524,13 +505,10 @@ enum NamedGroup {
         }
 
         @Override
-        public SSLCredentials decodeCredentials(NamedGroup ng, byte[] encoded,
-                    AlgorithmConstraints constraints,
-                    ExceptionSupplier onConstraintFail
-                ) throws IOException, GeneralSecurityException {
+        public SSLCredentials decodeCredentials(NamedGroup ng,
+                byte[] encoded) throws IOException, GeneralSecurityException {
             if (scheme != null) {
-                return scheme.decodeCredentials(
-                        ng, encoded, constraints, onConstraintFail);
+                return scheme.decodeCredentials(ng, encoded);
             }
 
             return null;
@@ -563,22 +541,13 @@ enum NamedGroup {
         @Override
         public byte[] encodePossessionPublicKey(
                 NamedGroupPossession namedGroupPossession) {
-            return ((DHEPossession)namedGroupPossession).encode();
+            return namedGroupPossession.encode();
         }
 
         @Override
-        public SSLCredentials decodeCredentials(NamedGroup ng, byte[] encoded,
-                AlgorithmConstraints constraints,
-                ExceptionSupplier onConstraintFail
-            ) throws IOException, GeneralSecurityException {
-
-            DHKeyExchange.DHECredentials result
-                    = DHKeyExchange.DHECredentials.valueOf(ng, encoded);
-
-            checkConstraints(result.getPublicKey(), constraints,
-                    onConstraintFail);
-
-            return result;
+        public SSLCredentials decodeCredentials(NamedGroup ng,
+                byte[] encoded) throws IOException, GeneralSecurityException {
+            return DHKeyExchange.DHECredentials.valueOf(ng, encoded);
         }
 
         @Override
@@ -605,18 +574,9 @@ enum NamedGroup {
         }
 
         @Override
-        public SSLCredentials decodeCredentials(NamedGroup ng, byte[] encoded,
-                AlgorithmConstraints constraints,
-                ExceptionSupplier onConstraintFail
-            ) throws IOException, GeneralSecurityException {
-
-            ECDHKeyExchange.ECDHECredentials result
-                    = ECDHKeyExchange.ECDHECredentials.valueOf(ng, encoded);
-
-            checkConstraints(result.getPublicKey(), constraints,
-                    onConstraintFail);
-
-            return result;
+        public SSLCredentials decodeCredentials(NamedGroup ng,
+                byte[] encoded) throws IOException, GeneralSecurityException {
+            return ECDHKeyExchange.ECDHECredentials.valueOf(ng, encoded);
         }
 
         @Override
@@ -641,18 +601,9 @@ enum NamedGroup {
         }
 
         @Override
-        public SSLCredentials decodeCredentials(NamedGroup ng, byte[] encoded,
-                AlgorithmConstraints constraints,
-                ExceptionSupplier onConstraintFail
-            ) throws IOException, GeneralSecurityException {
-
-            XDHKeyExchange.XDHECredentials result
-                    = XDHKeyExchange.XDHECredentials.valueOf(ng, encoded);
-
-            checkConstraints(result.getPublicKey(), constraints,
-                    onConstraintFail);
-
-            return result;
+        public SSLCredentials decodeCredentials(NamedGroup ng,
+                byte[] encoded) throws IOException, GeneralSecurityException {
+            return XDHKeyExchange.XDHECredentials.valueOf(ng, encoded);
         }
 
         @Override

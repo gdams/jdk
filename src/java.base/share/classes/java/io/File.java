@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1994, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1994, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,7 +35,7 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
-import sun.security.action.GetPropertyAction;
+import jdk.internal.util.StaticProperty;
 
 /**
  * An abstract representation of file and directory pathnames.
@@ -175,8 +175,9 @@ public class File
 
     /**
      * Check if the file has an invalid path. Currently, the inspection of
-     * a file path is very limited, and it only covers Nul character check.
-     * Returning true means the path is definitely invalid/garbage. But
+     * a file path is very limited, and it only covers Nul character check
+     * unless further checking is explicitly enabled by a system property.
+     * Returning true means the path is definitely invalid/garbage, but
      * returning false does not guarantee that the path is valid.
      *
      * @return true if the file path is invalid.
@@ -184,8 +185,7 @@ public class File
     final boolean isInvalid() {
         PathStatus s = status;
         if (s == null) {
-            s = (this.path.indexOf('\u0000') < 0) ? PathStatus.CHECKED
-                                                  : PathStatus.INVALID;
+            s = fs.isInvalid(this) ? PathStatus.INVALID : PathStatus.CHECKED;
             status = s;
         }
         return s == PathStatus.INVALID;
@@ -220,7 +220,7 @@ public class File
      * string for convenience.  This string contains a single character, namely
      * {@link #separatorChar}.
      */
-    public static final String separator = "" + separatorChar;
+    public static final String separator = String.valueOf(separatorChar);
 
     /**
      * The system-dependent path-separator character.  This field is
@@ -239,7 +239,7 @@ public class File
      * for convenience.  This string contains a single character, namely
      * {@link #pathSeparatorChar}.
      */
-    public static final String pathSeparator = "" + pathSeparatorChar;
+    public static final String pathSeparator = String.valueOf(pathSeparatorChar);
 
 
     /* -- Constructors -- */
@@ -694,7 +694,9 @@ public class File
         if (isInvalid()) {
             throw new MalformedURLException("Invalid file path");
         }
-        return new URL("file", "", slashify(getAbsolutePath(), isDirectory()));
+        @SuppressWarnings("deprecation")
+        var result = new URL("file", "", slashify(getAbsolutePath(), isDirectory()));
+        return result;
     }
 
     /**
@@ -770,6 +772,7 @@ public class File
      *          method denies read access to the file
      */
     public boolean canRead() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -798,6 +801,7 @@ public class File
      *          method denies write access to the file
      */
     public boolean canWrite() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -821,6 +825,7 @@ public class File
      *          method denies read access to the file or directory
      */
     public boolean exists() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -851,6 +856,7 @@ public class File
      *          method denies read access to the file
      */
     public boolean isDirectory() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -883,6 +889,7 @@ public class File
      *          method denies read access to the file
      */
     public boolean isFile() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -912,6 +919,7 @@ public class File
      * @since 1.2
      */
     public boolean isHidden() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -955,6 +963,7 @@ public class File
      *          method denies read access to the file
      */
     public long lastModified() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -986,6 +995,7 @@ public class File
      *          method denies read access to the file
      */
     public long length() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -1026,6 +1036,7 @@ public class File
      * @since 1.2
      */
     public boolean createNewFile() throws IOException {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) security.checkWrite(path);
         if (isInvalid()) {
@@ -1053,6 +1064,7 @@ public class File
      *          delete access to the file
      */
     public boolean delete() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkDelete(path);
@@ -1091,6 +1103,7 @@ public class File
      * @since 1.2
      */
     public void deleteOnExit() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkDelete(path);
@@ -1154,6 +1167,7 @@ public class File
      *          the directory
      */
     private final String[] normalizedList() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkRead(path);
@@ -1356,6 +1370,7 @@ public class File
      *          method does not permit the named directory to be created
      */
     public boolean mkdir() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1438,6 +1453,7 @@ public class File
         if (dest == null) {
             throw new NullPointerException();
         }
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1477,6 +1493,7 @@ public class File
      */
     public boolean setLastModified(long time) {
         if (time < 0) throw new IllegalArgumentException("Negative time");
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1507,6 +1524,7 @@ public class File
      * @since 1.2
      */
     public boolean setReadOnly() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1550,6 +1568,7 @@ public class File
      * @since 1.6
      */
     public boolean setWritable(boolean writable, boolean ownerOnly) {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1628,6 +1647,7 @@ public class File
      * @since 1.6
      */
     public boolean setReadable(boolean readable, boolean ownerOnly) {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1709,6 +1729,7 @@ public class File
      * @since 1.6
      */
     public boolean setExecutable(boolean executable, boolean ownerOnly) {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkWrite(path);
@@ -1772,6 +1793,7 @@ public class File
      * @since 1.6
      */
     public boolean canExecute() {
+        @SuppressWarnings("removal")
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkExec(path);
@@ -1854,6 +1876,7 @@ public class File
      * @see FileStore#getTotalSpace
      */
     public long getTotalSpace() {
+        @SuppressWarnings("removal")
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             sm.checkPermission(new RuntimePermission("getFileSystemAttributes"));
@@ -1897,6 +1920,7 @@ public class File
      * @see FileStore#getUnallocatedSpace
      */
     public long getFreeSpace() {
+        @SuppressWarnings("removal")
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             sm.checkPermission(new RuntimePermission("getFileSystemAttributes"));
@@ -1943,6 +1967,7 @@ public class File
      * @see FileStore#getUsableSpace
      */
     public long getUsableSpace() {
+        @SuppressWarnings("removal")
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             sm.checkPermission(new RuntimePermission("getFileSystemAttributes"));
@@ -1961,8 +1986,8 @@ public class File
         private TempDirectory() { }
 
         // temporary directory location
-        private static final File tmpdir = new File(
-                GetPropertyAction.privilegedGetProperty("java.io.tmpdir"));
+        private static final File tmpdir = new File(StaticProperty.javaIoTmpDir());
+
         static File location() {
             return tmpdir;
         }
@@ -1977,6 +2002,7 @@ public class File
             }
             return subNameLength;
         }
+        @SuppressWarnings("removal")
         static File generateFile(String prefix, String suffix, File dir)
             throws IOException
         {
@@ -1988,7 +2014,7 @@ public class File
 
             int prefixLength = prefix.length();
             int nusLength = nus.length();
-            int suffixLength = suffix.length();;
+            int suffixLength = suffix.length();
 
             String name;
             int nameMax = fs.getNameMax(dir.getPath());
@@ -1998,7 +2024,7 @@ public class File
             } else {
                 // Name exceeds the maximum path component length: shorten it
 
-                // Attempt to shorten the prefix length to no less then 3
+                // Attempt to shorten the prefix length to no less than 3
                 prefixLength = shortenSubName(prefixLength, excess, 3);
                 excess = prefixLength + nusLength + suffixLength - nameMax;
 
@@ -2086,6 +2112,13 @@ public class File
      * is invoked, but programmatic changes to this property are not guaranteed
      * to have any effect upon the temporary directory used by this method.
      *
+     * <p> If the {@code directory} argument is not {@code null} and its
+     * abstract pathname is valid and denotes an existing, writable directory,
+     * then the file will be created in that directory. Otherwise the file will
+     * not be created and an {@code IOException} will be thrown.  Under no
+     * circumstances will a directory be created at the location specified by
+     * the {@code directory} argument.
+     *
      * @param  prefix     The prefix string to be used in generating the file's
      *                    name; must be at least three characters long
      *
@@ -2103,7 +2136,8 @@ public class File
      *          If the {@code prefix} argument contains fewer than three
      *          characters
      *
-     * @throws  IOException  If a file could not be created
+     * @throws  IOException
+     *          If a file could not be created
      *
      * @throws  SecurityException
      *          If a security manager exists and its {@link
@@ -2125,6 +2159,8 @@ public class File
 
         File tmpdir = (directory != null) ? directory
                                           : TempDirectory.location();
+
+        @SuppressWarnings("removal")
         SecurityManager sm = System.getSecurityManager();
         File f;
         do {
@@ -2196,8 +2232,8 @@ public class File
     /**
      * Compares two abstract pathnames lexicographically.  The ordering
      * defined by this method depends upon the underlying system.  On UNIX
-     * systems, alphabetic case is significant in comparing pathnames; on Microsoft Windows
-     * systems it is not.
+     * systems, alphabetic case is significant in comparing pathnames; on
+     * Microsoft Windows systems it is not.
      *
      * @param   pathname  The abstract pathname to be compared to this abstract
      *                    pathname
@@ -2217,16 +2253,23 @@ public class File
     /**
      * Tests this abstract pathname for equality with the given object.
      * Returns {@code true} if and only if the argument is not
-     * {@code null} and is an abstract pathname that denotes the same file
-     * or directory as this abstract pathname.  Whether or not two abstract
-     * pathnames are equal depends upon the underlying system.  On UNIX
-     * systems, alphabetic case is significant in comparing pathnames; on Microsoft Windows
-     * systems it is not.
+     * {@code null} and is an abstract pathname that is the same as this
+     * abstract pathname.  Whether or not two abstract
+     * pathnames are equal depends upon the underlying operating system.
+     * On UNIX systems, alphabetic case is significant in comparing pathnames;
+     * on Microsoft Windows systems it is not.
+     *
+     * @apiNote This method only tests whether the abstract pathnames are equal;
+     *          it does not access the file system and the file is not required
+     *          to exist.
      *
      * @param   obj   The object to be compared with this abstract pathname
      *
      * @return  {@code true} if and only if the objects are the same;
      *          {@code false} otherwise
+     *
+     * @see #compareTo(File)
+     * @see java.nio.file.Files#isSameFile(Path,Path)
      */
     public boolean equals(Object obj) {
         if (obj instanceof File file) {

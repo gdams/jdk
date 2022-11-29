@@ -25,7 +25,7 @@
 #ifndef SHARE_COMPILER_COMPILERTHREAD_HPP
 #define SHARE_COMPILER_COMPILERTHREAD_HPP
 
-#include "runtime/thread.hpp"
+#include "runtime/javaThread.hpp"
 
 class BufferBlob;
 class AbstractCompiler;
@@ -56,7 +56,14 @@ class CompilerThread : public JavaThread {
 
  public:
 
-  static CompilerThread* current();
+  static CompilerThread* current() {
+    return CompilerThread::cast(JavaThread::current());
+  }
+
+  static CompilerThread* cast(Thread* t) {
+    assert(t->is_Compiler_thread(), "incorrect cast to CompilerThread");
+    return static_cast<CompilerThread*>(t);
+  }
 
   CompilerThread(CompileQueue* queue, CompilerCounters* counters);
   ~CompilerThread();
@@ -108,39 +115,5 @@ class CompilerThread : public JavaThread {
 
   static void thread_entry(JavaThread* thread, TRAPS);
 };
-
-inline CompilerThread* JavaThread::as_CompilerThread() {
-  assert(is_Compiler_thread(), "just checking");
-  return (CompilerThread*)this;
-}
-
-inline CompilerThread* CompilerThread::current() {
-  return JavaThread::current()->as_CompilerThread();
-}
-
-// Dedicated thread to sweep the code cache
-class CodeCacheSweeperThread : public JavaThread {
-  CompiledMethod*       _scanned_compiled_method; // nmethod being scanned by the sweeper
-
-  static void thread_entry(JavaThread* thread, TRAPS);
-
- public:
-  CodeCacheSweeperThread();
-  // Track the nmethod currently being scanned by the sweeper
-  void set_scanned_compiled_method(CompiledMethod* cm) {
-    assert(_scanned_compiled_method == NULL || cm == NULL, "should reset to NULL before writing a new value");
-    _scanned_compiled_method = cm;
-  }
-
-  // Hide sweeper thread from external view.
-  bool is_hidden_from_external_view() const { return true; }
-
-  bool is_Code_cache_sweeper_thread() const { return true; }
-
-  // Prevent GC from unloading _scanned_compiled_method
-  void oops_do_no_frames(OopClosure* f, CodeBlobClosure* cf);
-  void nmethods_do(CodeBlobClosure* cf);
-};
-
 
 #endif  // SHARE_COMPILER_COMPILERTHREAD_HPP

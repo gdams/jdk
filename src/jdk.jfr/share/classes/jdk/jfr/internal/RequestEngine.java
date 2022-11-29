@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,12 +28,12 @@ package jdk.jfr.internal;
 import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
 import jdk.jfr.Event;
 import jdk.jfr.EventType;
@@ -41,15 +41,17 @@ import jdk.jfr.EventType;
 public final class RequestEngine {
 
     private static final JVM jvm = JVM.getJVM();
+    private static final ReentrantLock lock = new ReentrantLock();
 
     static final class RequestHook {
         private final Runnable hook;
         private final PlatformEventType type;
+        @SuppressWarnings("removal")
         private final AccessControlContext accessControllerContext;
         private long delta;
 
         // Java events
-        private RequestHook(AccessControlContext acc, PlatformEventType eventType, Runnable hook) {
+        private RequestHook(@SuppressWarnings("removal") AccessControlContext acc, PlatformEventType eventType, Runnable hook) {
             this.hook = hook;
             this.type = eventType;
             this.accessControllerContext = acc;
@@ -66,7 +68,7 @@ public final class RequestEngine {
                     if (type.isJDK()) {
                         hook.run();
                     } else {
-                        jvm.emitEvent(type.getId(), JVM.counterTime(), 0);
+                        emitJVMEvent(type);
                     }
                     if (Logger.shouldLog(LogTag.JFR_SYSTEM, LogLevel.DEBUG)) {
                         Logger.log(LogTag.JFR_SYSTEM, LogLevel.DEBUG, "Executed periodic hook for " + type.getLogName());
@@ -80,6 +82,19 @@ public final class RequestEngine {
             }
         }
 
+        private void emitJVMEvent(PlatformEventType type) {
+            try {
+                // There should only be one thread in native at a time.
+                // ReentrantLock is used to avoid JavaMonitorBlocked event
+                // from synchronized block.
+                lock.lock();
+                jvm.emitEvent(type.getId(), JVM.counterTime(), 0);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @SuppressWarnings("removal")
         private void executeSecure() {
             AccessController.doPrivileged(new PrivilegedAction<Void>() {
                 @Override
@@ -104,12 +119,12 @@ public final class RequestEngine {
     private static long flushInterval = Long.MAX_VALUE;
     private static long streamDelta;
 
-    public static void addHook(AccessControlContext acc, PlatformEventType type, Runnable hook) {
+    public static void addHook(@SuppressWarnings("removal") AccessControlContext acc, PlatformEventType type, Runnable hook) {
         Objects.requireNonNull(acc);
         addHookInternal(acc, type, hook);
     }
 
-    private static void addHookInternal(AccessControlContext acc, PlatformEventType type, Runnable hook) {
+    private static void addHookInternal(@SuppressWarnings("removal") AccessControlContext acc, PlatformEventType type, Runnable hook) {
         RequestHook he = new RequestHook(acc, type, hook);
         for (RequestHook e : entries) {
             if (e.hook == hook) {
@@ -160,10 +175,8 @@ public final class RequestEngine {
     // Only to be used for JVM events. No access control contest
     // or check if hook already exists
     static void addHooks(List<RequestHook> newEntries) {
-        List<RequestHook> addEntries = new ArrayList<>();
         for (RequestHook rh : newEntries) {
             rh.type.setEventHook(true);
-            addEntries.add(rh);
             logHook("Added", rh.type);
         }
         entries.addAll(newEntries);
@@ -222,7 +235,7 @@ public final class RequestEngine {
             long left = 0;
             PlatformEventType es = he.type;
             // Not enabled, skip.
-            if (!es.isEnabled() || es.isEveryChunk()) {
+            if (!es.isEnabled() || es.isChunkTime()) {
                 continue;
             }
             long r_period = es.getPeriod();
@@ -289,8 +302,8 @@ public final class RequestEngine {
         boolean needNotify = interval < flushInterval;
         flushInterval = interval;
         if (needNotify) {
-            synchronized (JVM.FILE_DELTA_CHANGE) {
-                JVM.FILE_DELTA_CHANGE.notifyAll();
+            synchronized (JVM.CHUNK_ROTATION_MONITOR) {
+                JVM.CHUNK_ROTATION_MONITOR.notifyAll();
             }
         }
     }

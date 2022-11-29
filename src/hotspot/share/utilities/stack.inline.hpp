@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2009, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,9 +25,10 @@
 #ifndef SHARE_UTILITIES_STACK_INLINE_HPP
 #define SHARE_UTILITIES_STACK_INLINE_HPP
 
+#include "utilities/stack.hpp"
+
 #include "memory/allocation.inline.hpp"
 #include "utilities/align.hpp"
-#include "utilities/stack.hpp"
 #include "utilities/copy.hpp"
 
 template <MEMFLAGS F> StackBase<F>::StackBase(size_t segment_size, size_t max_cache_size,
@@ -251,7 +252,7 @@ E* ResourceStack<E, F>::alloc(size_t bytes)
 template <class E, MEMFLAGS F>
 void ResourceStack<E, F>::free(E* addr, size_t bytes)
 {
-  resource_free_bytes((char*) addr, bytes);
+  resource_free_bytes(Thread::current(), (char*) addr, bytes);
 }
 
 template <class E, MEMFLAGS F>

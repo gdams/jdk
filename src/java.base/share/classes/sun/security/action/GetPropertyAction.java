@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2006, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -51,8 +51,8 @@ import java.util.Properties;
  */
 
 public class GetPropertyAction implements PrivilegedAction<String> {
-    private String theProp;
-    private String defaultVal;
+    private final String theProp;
+    private final String defaultVal;
 
     /**
      * Constructor that takes the name of the system property whose
@@ -62,6 +62,7 @@ public class GetPropertyAction implements PrivilegedAction<String> {
      */
     public GetPropertyAction(String theProp) {
         this.theProp = theProp;
+        this.defaultVal = null;
     }
 
     /**
@@ -100,6 +101,7 @@ public class GetPropertyAction implements PrivilegedAction<String> {
      *
      * @param theProp the name of the system property.
      */
+    @SuppressWarnings("removal")
     public static String privilegedGetProperty(String theProp) {
         if (System.getSecurityManager() == null) {
             return System.getProperty(theProp);
@@ -122,6 +124,7 @@ public class GetPropertyAction implements PrivilegedAction<String> {
      * @param theProp the name of the system property.
      * @param defaultVal the default value.
      */
+    @SuppressWarnings("removal")
     public static String privilegedGetProperty(String theProp,
             String defaultVal) {
         if (System.getSecurityManager() == null) {
@@ -143,6 +146,7 @@ public class GetPropertyAction implements PrivilegedAction<String> {
      * are not made accessible to untrusted code since it may contain
      * sensitive information.
      */
+    @SuppressWarnings("removal")
     public static Properties privilegedGetProperties() {
         if (System.getSecurityManager() == null) {
             return System.getProperties();

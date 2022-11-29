@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -72,6 +72,7 @@ import com.sun.tools.javac.tree.JCTree.JCMemberReference;
 import com.sun.tools.javac.tree.JCTree.JCMethodDecl;
 import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
 import com.sun.tools.javac.util.*;
+import com.sun.tools.javac.util.Context.Key;
 import com.sun.tools.javac.util.DefinedBy.Api;
 import com.sun.tools.javac.util.JCDiagnostic.Factory;
 import com.sun.tools.javac.util.Log.DiagnosticHandler;
@@ -161,17 +162,6 @@ public class JavaCompiler {
      */
     protected static enum CompilePolicy {
         /**
-         * Just attribute the parse trees.
-         */
-        ATTR_ONLY,
-
-        /**
-         * Just attribute and do flow analysis on the parse trees.
-         * This should catch most user errors.
-         */
-        CHECK_ONLY,
-
-        /**
          * Attribute everything, then do flow analysis for everything,
          * then desugar everything, and only then generate output.
          * This means no output will be generated if there are any
@@ -198,10 +188,6 @@ public class JavaCompiler {
         static CompilePolicy decode(String option) {
             if (option == null)
                 return DEFAULT_COMPILE_POLICY;
-            else if (option.equals("attr"))
-                return ATTR_ONLY;
-            else if (option.equals("check"))
-                return CHECK_ONLY;
             else if (option.equals("simple"))
                 return SIMPLE;
             else if (option.equals("byfile"))
@@ -443,11 +429,7 @@ public class JavaCompiler {
 
         verboseCompilePolicy = options.isSet("verboseCompilePolicy");
 
-        if (options.isSet("should-stop.at") &&
-            CompileState.valueOf(options.get("should-stop.at")) == CompileState.ATTR)
-            compilePolicy = CompilePolicy.ATTR_ONLY;
-        else
-            compilePolicy = CompilePolicy.decode(options.get("compilePolicy"));
+        compilePolicy = CompilePolicy.decode(options.get("compilePolicy"));
 
         implicitSourcePolicy = ImplicitSourcePolicy.decode(options.get("-implicit"));
 
@@ -948,14 +930,6 @@ public class JavaCompiler {
 
             if (!CompileState.ATTR.isAfter(shouldStopPolicyIfNoError)) {
                 switch (compilePolicy) {
-                case ATTR_ONLY:
-                    attribute(todo);
-                    break;
-
-                case CHECK_ONLY:
-                    flow(attribute(todo));
-                    break;
-
                 case SIMPLE:
                     generate(desugar(flow(attribute(todo))));
                     break;
@@ -1017,7 +991,7 @@ public class JavaCompiler {
      * Parses a list of files.
      */
    public List<JCCompilationUnit> parseFiles(Iterable<JavaFileObject> fileObjects) {
-       return parseFiles(fileObjects, false);
+       return InitialFileParser.instance(context).parse(fileObjects);
    }
 
    public List<JCCompilationUnit> parseFiles(Iterable<JavaFileObject> fileObjects, boolean force) {
@@ -1086,8 +1060,8 @@ public class JavaCompiler {
                 for (List<JCTree> defs = unit.defs;
                      defs.nonEmpty();
                      defs = defs.tail) {
-                    if (defs.head instanceof JCClassDecl)
-                        cdefs.append((JCClassDecl)defs.head);
+                    if (defs.head instanceof JCClassDecl classDecl)
+                        cdefs.append(classDecl);
                 }
             }
             rootClasses = cdefs.toList();
@@ -1332,7 +1306,7 @@ public class JavaCompiler {
             log.printVerbose("checking.attribution", env.enclClass.sym);
 
         if (!taskListener.isEmpty()) {
-            TaskEvent e = new TaskEvent(TaskEvent.Kind.ANALYZE, env.toplevel, env.enclClass.sym);
+            TaskEvent e = newAnalyzeTaskEvent(env);
             taskListener.started(e);
         }
 
@@ -1417,10 +1391,28 @@ public class JavaCompiler {
         }
         finally {
             if (!taskListener.isEmpty()) {
-                TaskEvent e = new TaskEvent(TaskEvent.Kind.ANALYZE, env.toplevel, env.enclClass.sym);
+                TaskEvent e = newAnalyzeTaskEvent(env);
                 taskListener.finished(e);
             }
         }
+    }
+
+    private TaskEvent newAnalyzeTaskEvent(Env<AttrContext> env) {
+        JCCompilationUnit toplevel = env.toplevel;
+        ClassSymbol sym;
+        if (env.enclClass.sym == syms.predefClass) {
+            if (TreeInfo.isModuleInfo(toplevel)) {
+                sym = toplevel.modle.module_info;
+            } else if (TreeInfo.isPackageInfo(toplevel)) {
+                sym = toplevel.packge.package_info;
+            } else {
+                throw new IllegalStateException("unknown env.toplevel");
+            }
+        } else {
+            sym = env.enclClass.sym;
+        }
+
+        return new TaskEvent(TaskEvent.Kind.ANALYZE, toplevel, sym);
     }
 
     /**
@@ -1562,7 +1554,7 @@ public class JavaCompiler {
             env.tree = TransPatterns.instance(context).translateTopLevelClass(env, env.tree, localMake);
             compileStates.put(env, CompileState.TRANSPATTERNS);
 
-            if (Feature.LAMBDA.allowedInSource(source) && scanner.hasLambdas) {
+            if (scanner.hasLambdas) {
                 if (shouldStop(CompileState.UNLAMBDA))
                     return;
 
@@ -1577,8 +1569,8 @@ public class JavaCompiler {
                 //emit standard Java source file, only for compilation
                 //units enumerated explicitly on the command line
                 JCClassDecl cdef = (JCClassDecl)env.tree;
-                if (untranslated instanceof JCClassDecl &&
-                    rootClasses.contains((JCClassDecl)untranslated)) {
+                if (untranslated instanceof JCClassDecl classDecl &&
+                    rootClasses.contains(classDecl)) {
                     results.add(new Pair<>(env, cdef));
                 }
                 return;
@@ -1874,5 +1866,33 @@ public class JavaCompiler {
     public void newRound() {
         inputFiles.clear();
         todo.clear();
+    }
+
+    public interface InitialFileParserIntf {
+        public List<JCCompilationUnit> parse(Iterable<JavaFileObject> files);
+    }
+
+    public static class InitialFileParser implements InitialFileParserIntf {
+
+        public static final Key<InitialFileParserIntf> initialParserKey = new Key<>();
+
+        public static InitialFileParserIntf instance(Context context) {
+            InitialFileParserIntf instance = context.get(initialParserKey);
+            if (instance == null)
+                instance = new InitialFileParser(context);
+            return instance;
+        }
+
+        private final JavaCompiler compiler;
+
+        private InitialFileParser(Context context) {
+            context.put(initialParserKey, this);
+            this.compiler = JavaCompiler.instance(context);
+        }
+
+        @Override
+        public List<JCCompilationUnit> parse(Iterable<JavaFileObject> fileObjects) {
+           return compiler.parseFiles(fileObjects, false);
+        }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,37 +32,13 @@
 #include "logging/log.hpp"
 #include "runtime/atomic.hpp"
 
-StringDedupCleaningTask::StringDedupCleaningTask(BoolObjectClosure* is_alive,
-                                                 OopClosure* keep_alive,
-                                                 bool resize_table) :
-  AbstractGangTask("String Dedup Cleaning"),
-  _dedup_closure(is_alive, keep_alive) {
-
-  if (StringDedup::is_enabled()) {
-    StringDedup::gc_prologue(resize_table);
-  }
-}
-
-StringDedupCleaningTask::~StringDedupCleaningTask() {
-  if (StringDedup::is_enabled()) {
-    StringDedup::gc_epilogue();
-  }
-}
-
-void StringDedupCleaningTask::work(uint worker_id) {
-  if (StringDedup::is_enabled()) {
-    StringDedup::parallel_unlink(&_dedup_closure, worker_id);
-  }
-}
-
-CodeCacheUnloadingTask::CodeCacheUnloadingTask(uint num_workers, BoolObjectClosure* is_alive, bool unloading_occurred) :
-  _unloading_scope(is_alive),
+CodeCacheUnloadingTask::CodeCacheUnloadingTask(uint num_workers, bool unloading_occurred) :
   _unloading_occurred(unloading_occurred),
   _num_workers(num_workers),
   _first_nmethod(NULL),
   _claimed_nmethod(NULL) {
   // Get first alive nmethod
-  CompiledMethodIterator iter(CompiledMethodIterator::only_alive);
+  CompiledMethodIterator iter(CompiledMethodIterator::all_blobs);
   if(iter.next()) {
     _first_nmethod = iter.method();
   }
@@ -76,13 +52,13 @@ CodeCacheUnloadingTask::~CodeCacheUnloadingTask() {
 
 void CodeCacheUnloadingTask::claim_nmethods(CompiledMethod** claimed_nmethods, int *num_claimed_nmethods) {
   CompiledMethod* first;
-  CompiledMethodIterator last(CompiledMethodIterator::only_alive);
+  CompiledMethodIterator last(CompiledMethodIterator::all_blobs);
 
   do {
     *num_claimed_nmethods = 0;
 
     first = _claimed_nmethod;
-    last = CompiledMethodIterator(CompiledMethodIterator::only_alive, first);
+    last = CompiledMethodIterator(CompiledMethodIterator::all_blobs, first);
 
     if (first != NULL) {
 

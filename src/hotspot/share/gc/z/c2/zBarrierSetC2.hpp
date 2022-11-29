@@ -35,7 +35,7 @@ const uint8_t ZLoadBarrierWeak        = 2;
 const uint8_t ZLoadBarrierPhantom     = 4;
 const uint8_t ZLoadBarrierNoKeepalive = 8;
 
-class ZLoadBarrierStubC2 : public ResourceObj {
+class ZLoadBarrierStubC2 : public ArenaObj {
 private:
   const MachNode* _node;
   const Address   _ref_addr;
@@ -83,6 +83,7 @@ public:
   virtual bool array_copy_requires_gc_barriers(bool tightly_coupled_alloc,
                                                BasicType type,
                                                bool is_clone,
+                                               bool is_clone_instance,
                                                ArrayCopyPhase phase) const;
   virtual void clone_at_expansion(PhaseMacroExpand* phase,
                                   ArrayCopyNode* ac) const;

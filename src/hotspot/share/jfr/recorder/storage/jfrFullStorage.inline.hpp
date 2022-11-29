@@ -25,8 +25,9 @@
 #ifndef SHARE_JFR_RECORDER_STORAGE_JFRSTORAGEFULLLIST_INLINE_HPP
 #define SHARE_JFR_RECORDER_STORAGE_JFRSTORAGEFULLLIST_INLINE_HPP
 
-#include "jfr/recorder/storage/jfrStorageControl.hpp"
 #include "jfr/recorder/storage/jfrFullStorage.hpp"
+
+#include "jfr/recorder/storage/jfrStorageControl.hpp"
 #include "jfr/utilities/jfrConcurrentQueue.inline.hpp"
 
 template <typename ValueType, template <typename> class NodeType, typename AllocPolicy>
@@ -57,7 +58,7 @@ bool JfrFullStorage<ValueType, NodeType, AllocPolicy>::initialize(size_t free_li
     return false;
   }
   for (size_t i = 0; i < free_list_prealloc_count; ++i) {
-    NodePtr node = new (ResourceObj::C_HEAP, mtTracing) Node();
+    NodePtr node = new Node();
     if (node == NULL) {
       return false;
     }
@@ -82,7 +83,7 @@ template <typename ValueType, template <typename> class NodeType, typename Alloc
 inline typename JfrFullStorage<ValueType, NodeType, AllocPolicy>::NodePtr
 JfrFullStorage<ValueType, NodeType, AllocPolicy>::acquire() {
   NodePtr node = _free_node_list->remove();
-  return node != NULL ? node : new (ResourceObj::C_HEAP, mtTracing) Node();
+  return node != NULL ? node : new Node();
 }
 
 template <typename ValueType, template <typename> class NodeType, typename AllocPolicy>

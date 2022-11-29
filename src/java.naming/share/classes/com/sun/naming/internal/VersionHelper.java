@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -63,6 +63,7 @@ public final class VersionHelper {
         // arbitrary URL code base
         PrivilegedAction<String> act
                 = () -> System.getProperty("com.sun.jndi.ldap.object.trustURLCodebase", "false");
+        @SuppressWarnings("removal")
         String trust = AccessController.doPrivileged(act);
         TRUST_URL_CODE_BASE = "true".equalsIgnoreCase(trust);
     }
@@ -138,6 +139,7 @@ public final class VersionHelper {
      * null if the property is not set, or if there is no permission
      * to read it.
      */
+    @SuppressWarnings("removal")
     String getJndiProperty(int i) {
         PrivilegedAction<String> act = () -> {
             try {
@@ -163,6 +165,7 @@ public final class VersionHelper {
                 return null;
             }
         };
+        @SuppressWarnings("removal")
         Properties sysProps = AccessController.doPrivileged(act);
         if (sysProps == null) {
             return null;
@@ -196,6 +199,7 @@ public final class VersionHelper {
      * Returns the resource of a given name associated with a particular
      * class (never null), or null if none can be found.
      */
+    @SuppressWarnings("removal")
     InputStream getResourceAsStream(Class<?> c, String name) {
         PrivilegedAction<InputStream> act = () -> {
             try {
@@ -213,6 +217,7 @@ public final class VersionHelper {
      *
      * @param filename  The file name, sans directory.
      */
+    @SuppressWarnings("removal")
     InputStream getJavaHomeConfStream(String filename) {
         PrivilegedAction<InputStream> act = () -> {
             try {
@@ -234,6 +239,7 @@ public final class VersionHelper {
      * loader.  Null represents the bootstrap class loader in some
      * Java implementations.
      */
+    @SuppressWarnings("removal")
     NamingEnumeration<InputStream> getResources(ClassLoader cl,
                                                 String name) throws IOException {
         Enumeration<URL> urls;
@@ -259,6 +265,7 @@ public final class VersionHelper {
      * Please don't expose this method as public.
      * @throws SecurityException if the class loader is not accessible
      */
+    @SuppressWarnings("removal")
     ClassLoader getContextClassLoader() {
 
         PrivilegedAction<ClassLoader> act = () -> {
@@ -278,7 +285,9 @@ public final class VersionHelper {
         StringTokenizer parser = new StringTokenizer(codebase);
         List<URL> list = new ArrayList<>();
         while (parser.hasMoreTokens()) {
-            list.add(new URL(parser.nextToken()));
+            @SuppressWarnings("deprecation")
+            var u = new URL(parser.nextToken());
+            list.add(u);
         }
         return list.toArray(new URL[0]);
     }
@@ -305,6 +314,7 @@ public final class VersionHelper {
          * Returns the next InputStream, or null if there are no more.
          * An InputStream that cannot be opened is skipped.
          */
+        @SuppressWarnings("removal")
         private InputStream getNextElement() {
             PrivilegedAction<InputStream> act = () -> {
                 while (urls.hasMoreElements()) {

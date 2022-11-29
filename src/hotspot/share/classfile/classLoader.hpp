@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -64,10 +64,10 @@ public:
   // Constructor
   ClassPathEntry() : _next(NULL) {}
   // Attempt to locate file_name through this class path entry.
-  // Returns a class file parsing stream if successfull.
-  virtual ClassFileStream* open_stream(Thread* current, const char* name) = 0;
+  // Returns a class file parsing stream if successful.
+  virtual ClassFileStream* open_stream(JavaThread* current, const char* name) = 0;
   // Open the stream for a specific class loader
-  virtual ClassFileStream* open_stream_for_loader(Thread* current, const char* name, ClassLoaderData* loader_data) {
+  virtual ClassFileStream* open_stream_for_loader(JavaThread* current, const char* name, ClassLoaderData* loader_data) {
     return open_stream(current, name);
   }
 };
@@ -80,8 +80,8 @@ class ClassPathDirEntry: public ClassPathEntry {
   ClassPathDirEntry(const char* dir) {
     _dir = copy_path(dir);
   }
-  virtual ~ClassPathDirEntry() {}
-  ClassFileStream* open_stream(Thread* current, const char* name);
+  virtual ~ClassPathDirEntry();
+  ClassFileStream* open_stream(JavaThread* current, const char* name);
 };
 
 // Type definitions for zip file and zip file entry
@@ -108,28 +108,26 @@ class ClassPathZipEntry: public ClassPathEntry {
   const char* name() const { return _zip_name; }
   ClassPathZipEntry(jzfile* zip, const char* zip_name, bool is_boot_append, bool from_class_path_attr);
   virtual ~ClassPathZipEntry();
-  u1* open_entry(Thread* current, const char* name, jint* filesize, bool nul_terminate);
-  ClassFileStream* open_stream(Thread* current, const char* name);
-  void contents_do(void f(const char* name, void* context), void* context);
+  u1* open_entry(JavaThread* current, const char* name, jint* filesize, bool nul_terminate);
+  ClassFileStream* open_stream(JavaThread* current, const char* name);
 };
 
 
 // For java image files
 class ClassPathImageEntry: public ClassPathEntry {
 private:
-  JImageFile* _jimage;
   const char* _name;
   DEBUG_ONLY(static ClassPathImageEntry* _singleton;)
 public:
   bool is_modules_image() const;
-  bool is_open() const { return _jimage != NULL; }
   const char* name() const { return _name == NULL ? "" : _name; }
-  JImageFile* jimage() const { return _jimage; }
+  JImageFile* jimage() const;
+  JImageFile* jimage_non_null() const;
   void close_jimage();
   ClassPathImageEntry(JImageFile* jimage, const char* name);
-  virtual ~ClassPathImageEntry();
-  ClassFileStream* open_stream(Thread* current, const char* name);
-  ClassFileStream* open_stream_for_loader(Thread* current, const char* name, ClassLoaderData* loader_data);
+  virtual ~ClassPathImageEntry() { ShouldNotReachHere(); }
+  ClassFileStream* open_stream(JavaThread* current, const char* name);
+  ClassFileStream* open_stream_for_loader(JavaThread* current, const char* name, ClassLoaderData* loader_data);
 };
 
 // ModuleClassPathList contains a linked list of ClassPathEntry's
@@ -222,14 +220,17 @@ class ClassLoader: AllStatic {
   CDS_ONLY(static ClassPathEntry* _last_app_classpath_entry;)
   CDS_ONLY(static ClassPathEntry* _module_path_entries;)
   CDS_ONLY(static ClassPathEntry* _last_module_path_entry;)
-  CDS_ONLY(static void setup_app_search_path(Thread* current, const char* class_path);)
-  CDS_ONLY(static void setup_module_search_path(Thread* current, const char* path);)
-  static void add_to_app_classpath_entries(Thread* current,
+  CDS_ONLY(static void setup_app_search_path(JavaThread* current, const char* class_path);)
+  CDS_ONLY(static void setup_module_search_path(JavaThread* current, const char* path);)
+  static void add_to_app_classpath_entries(JavaThread* current,
                                            const char* path,
                                            ClassPathEntry* entry,
                                            bool check_for_duplicates);
   CDS_ONLY(static void add_to_module_path_entries(const char* path,
                                            ClassPathEntry* entry);)
+
+  // cache the zip library handle
+  static void* _zip_handle;
  public:
   CDS_ONLY(static ClassPathEntry* app_classpath_entries() {return _app_classpath_entries;})
   CDS_ONLY(static ClassPathEntry* module_path_entries() {return _module_path_entries;})
@@ -241,8 +242,8 @@ class ClassLoader: AllStatic {
   //   - setup the boot loader's system class path
   //   - setup the boot loader's patch mod entries, if present
   //   - create the ModuleEntry for java.base
-  static void setup_bootstrap_search_path(Thread* current);
-  static void setup_bootstrap_search_path_impl(Thread* current, const char *class_path);
+  static void setup_bootstrap_search_path(JavaThread* current);
+  static void setup_bootstrap_search_path_impl(JavaThread* current, const char *class_path);
   static void setup_patch_mod_entries();
   static void create_javabase();
 
@@ -254,11 +255,12 @@ class ClassLoader: AllStatic {
  private:
   static int  _libzip_loaded; // used to sync loading zip.
   static void release_load_zip_library();
-  static inline void load_zip_library_if_needed();
-  static jzfile* open_zip_file(const char* canonical_path, char** error_msg, JavaThread* thread);
 
  public:
-  static ClassPathEntry* create_class_path_entry(Thread* current,
+  static inline void load_zip_library_if_needed();
+  static void* zip_library_handle() { return _zip_handle; }
+  static jzfile* open_zip_file(const char* canonical_path, char** error_msg, JavaThread* thread);
+  static ClassPathEntry* create_class_path_entry(JavaThread* current,
                                                  const char *path, const struct stat* st,
                                                  bool is_boot_append,
                                                  bool from_class_path_attr);
@@ -270,7 +272,7 @@ class ClassLoader: AllStatic {
                                               int class_name_len);
   static PackageEntry* get_package_entry(Symbol* pkg_name, ClassLoaderData* loader_data);
   static int crc32(int crc, const char* buf, int len);
-  static bool update_class_path_entry_list(Thread* current,
+  static bool update_class_path_entry_list(JavaThread* current,
                                            const char *path,
                                            bool check_for_duplicates,
                                            bool is_boot_append,
@@ -311,10 +313,10 @@ class ClassLoader: AllStatic {
   static void close_jrt_image();
 
   // Add a module's exploded directory to the boot loader's exploded module build list
-  static void add_to_exploded_build_list(Thread* current, Symbol* module_name);
+  static void add_to_exploded_build_list(JavaThread* current, Symbol* module_name);
 
   // Attempt load of individual class from either the patched or exploded modules build lists
-  static ClassFileStream* search_module_entries(Thread* current,
+  static ClassFileStream* search_module_entries(JavaThread* current,
                                                 const GrowableArray<ModuleClassPathList*>* const module_list,
                                                 const char* const class_name,
                                                 const char* const file_name);
@@ -338,8 +340,8 @@ class ClassLoader: AllStatic {
 
   // Initialization
   static void initialize(TRAPS);
-  static void classLoader_init2(Thread* current);
-  CDS_ONLY(static void initialize_shared_path(Thread* current);)
+  static void classLoader_init2(JavaThread* current);
+  CDS_ONLY(static void initialize_shared_path(JavaThread* current);)
   CDS_ONLY(static void initialize_module_path(TRAPS);)
 
   static int compute_Object_vtable();
@@ -366,7 +368,8 @@ class ClassLoader: AllStatic {
   static int num_module_path_entries();
   static void  exit_with_path_failure(const char* error, const char* message);
   static char* skip_uri_protocol(char* source);
-  static void  record_result(Thread* current, InstanceKlass* ik, const ClassFileStream* stream);
+  static void  record_result(JavaThread* current, InstanceKlass* ik,
+                             const ClassFileStream* stream, bool redefined);
 #endif
 
   static char* lookup_vm_options();

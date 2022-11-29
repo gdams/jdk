@@ -186,6 +186,7 @@ public abstract class BasicLookAndFeel extends LookAndFeel implements Serializab
     /**
      * {@inheritDoc}
      */
+    @SuppressWarnings("removal")
     public void uninitialize() {
         AppContext context = AppContext.getAppContext();
         synchronized (BasicPopupMenuUI.MOUSE_GRABBER_KEY) {
@@ -635,7 +636,7 @@ public abstract class BasicLookAndFeel extends LookAndFeel implements Serializab
             new BorderUIResource.EmptyBorderUIResource(6, zero, zero, zero);
 
 
-        // *** ProgessBar value objects
+        // *** ProgressBar value objects
 
         LazyValue progressBarBorder =
             t -> BasicBorders.getProgressBarBorder();
@@ -1150,7 +1151,7 @@ public abstract class BasicLookAndFeel extends LookAndFeel implements Serializab
             "PopupMenu.consumeEventOnClose", Boolean.FALSE,
 
             // *** OptionPane
-            // You can additionaly define OptionPane.messageFont which will
+            // You can additionally define OptionPane.messageFont which will
             // dictate the fonts used for the message, and
             // OptionPane.buttonFont, which defines the font for the buttons.
             "OptionPane.font", dialogPlain12,
@@ -2071,6 +2072,7 @@ public abstract class BasicLookAndFeel extends LookAndFeel implements Serializab
          * Class.getResourceAsStream just returns raw
          * bytes, which we can convert to a sound.
          */
+        @SuppressWarnings("removal")
         byte[] buffer = AccessController.doPrivileged(
                                                  new PrivilegedAction<byte[]>() {
                 public byte[] run() {
@@ -2179,6 +2181,7 @@ public abstract class BasicLookAndFeel extends LookAndFeel implements Serializab
      * events that can possibly invoke popup on the component
      */
     class AWTEventHelper implements AWTEventListener,PrivilegedAction<Object> {
+        @SuppressWarnings("removal")
         AWTEventHelper() {
             super();
             AccessController.doPrivileged(this);

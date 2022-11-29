@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -77,14 +77,15 @@ class LogDecorators {
     return 1 << decorator;
   }
 
-  LogDecorators(uint mask) : _decorators(mask) {
+  constexpr LogDecorators(uint mask) : _decorators(mask) {
   }
 
  public:
   static const LogDecorators None;
+  static const LogDecorators All;
 
   LogDecorators() : _decorators(DefaultDecoratorsMask) {
-  };
+  }
 
   void clear() {
     _decorators = 0;

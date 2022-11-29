@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -259,7 +259,7 @@ public abstract class SwingWorker<T, V> implements RunnableFuture<T> {
     private final PropertyChangeSupport propertyChangeSupport;
 
     /**
-     * handler for {@code process} mehtod.
+     * Handler for {@code process} method.
      */
     private AccumulativeRunnable<V> doProcess;
 
@@ -475,7 +475,7 @@ public abstract class SwingWorker<T, V> implements RunnableFuture<T> {
      * invocation argument only.
      *
      * <p>
-     * For example, the following invokations:
+     * For example, the following invocations:
      *
      * <pre>
      * setProgress(1);
@@ -720,7 +720,7 @@ public abstract class SwingWorker<T, V> implements RunnableFuture<T> {
      */
     public final StateValue getState() {
         /*
-         * DONE is a speacial case
+         * DONE is a special case
          * to keep getState and isDone is sync
          */
         if (isDone()) {
@@ -798,6 +798,7 @@ public abstract class SwingWorker<T, V> implements RunnableFuture<T> {
             final ExecutorService es = executorService;
             appContext.addPropertyChangeListener(AppContext.DISPOSED_PROPERTY_NAME,
                 new PropertyChangeListener() {
+                    @SuppressWarnings("removal")
                     @Override
                     public void propertyChange(PropertyChangeEvent pce) {
                         boolean disposed = (Boolean)pce.getNewValue();

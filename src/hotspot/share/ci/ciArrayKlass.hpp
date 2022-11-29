@@ -54,9 +54,9 @@ public:
 
   // What kind of vmObject is this?
   bool is_array_klass() const { return true; }
-  bool is_java_klass() const  { return true; }
 
   static ciArrayKlass* make(ciType* element_type);
+
 };
 
 #endif // SHARE_CI_CIARRAYKLASS_HPP

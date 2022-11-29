@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,7 @@ import java.nio.ReadOnlyBufferException;
 import java.util.Objects;
 
 import jdk.internal.ref.CleanerFactory;
+import jdk.internal.util.Preconditions;
 import sun.nio.ch.DirectBuffer;
 
 /**
@@ -45,7 +46,7 @@ import sun.nio.ch.DirectBuffer;
  * This class inflates sequences of ZLIB compressed bytes. The input byte
  * sequence is provided in either byte array or byte buffer, via one of the
  * {@code setInput()} methods. The output byte sequence is written to the
- * output byte array or byte buffer passed to the {@code deflate()} methods.
+ * output byte array or byte buffer passed to the {@code inflate()} methods.
  * <p>
  * The following code fragment demonstrates a trivial compression
  * and decompression of a string using {@code Deflater} and
@@ -100,6 +101,7 @@ public class Inflater {
     private byte[] inputArray;
     private int inputPos, inputLim;
     private boolean finished;
+    private boolean pendingOutput;
     private boolean needDict;
     private long bytesRead;
     private long bytesWritten;
@@ -151,9 +153,7 @@ public class Inflater {
      * @see Inflater#needsInput
      */
     public void setInput(byte[] input, int off, int len) {
-        if (off < 0 || len < 0 || off > input.length - len) {
-            throw new ArrayIndexOutOfBoundsException();
-        }
+        Preconditions.checkFromIndexSize(len, off, input.length, Preconditions.AIOOBE_FORMATTER);
         synchronized (zsRef) {
             this.input = null;
             this.inputArray = input;
@@ -218,9 +218,7 @@ public class Inflater {
      * @see Inflater#getAdler
      */
     public void setDictionary(byte[] dictionary, int off, int len) {
-        if (off < 0 || len < 0 || off > dictionary.length - len) {
-            throw new ArrayIndexOutOfBoundsException();
-        }
+        Preconditions.checkFromIndexSize(len, off, dictionary.length, Preconditions.AIOOBE_FORMATTER);
         synchronized (zsRef) {
             ensureOpen();
             setDictionary(zsRef.address(), dictionary, off, len);
@@ -363,9 +361,7 @@ public class Inflater {
     public int inflate(byte[] output, int off, int len)
         throws DataFormatException
     {
-        if (off < 0 || len < 0 || off > output.length - len) {
-            throw new ArrayIndexOutOfBoundsException();
-        }
+        Preconditions.checkFromIndexSize(len, off, output.length, Preconditions.AIOOBE_FORMATTER);
         synchronized (zsRef) {
             ensureOpen();
             ByteBuffer input = this.input;
@@ -420,11 +416,18 @@ public class Inflater {
             if ((result >>> 62 & 1) != 0) {
                 finished = true;
             }
+            if (written == len && !finished) {
+                pendingOutput = true;
+            } else {
+                pendingOutput = false;
+            }
             if ((result >>> 63 & 1) != 0) {
                 needDict = true;
             }
             if (input != null) {
-                input.position(inputPos + read);
+                if (read > 0) {
+                    input.position(inputPos + read);
+                }
             } else {
                 this.inputPos = inputPos + read;
             }
@@ -712,6 +715,10 @@ public class Inflater {
         assert Thread.holdsLock(zsRef);
         if (zsRef.address() == 0)
             throw new NullPointerException("Inflater has been closed");
+    }
+
+    boolean hasPendingOutput() {
+        return pendingOutput;
     }
 
     private static native void initIDs();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -83,7 +83,9 @@ import sun.java2d.cmm.ProfileDeferralInfo;
  *
  * @see ICC_ColorSpace
  */
-public class ICC_Profile implements Serializable {
+public sealed class ICC_Profile implements Serializable
+    permits ICC_ProfileGray,
+            ICC_ProfileRGB {
 
     /**
      * Use serialVersionUID from JDK 1.2 for interoperability.
@@ -768,24 +770,6 @@ public class ICC_Profile implements Serializable {
     }
 
     /**
-     * Frees the resources associated with an {@code ICC_Profile} object.
-     *
-     * @deprecated The {@code finalize} method has been deprecated. Subclasses
-     *         that override {@code finalize} in order to perform cleanup should
-     *         be modified to use alternative cleanup mechanisms and to remove
-     *         the overriding {@code finalize} method. When overriding the
-     *         {@code finalize} method, its implementation must explicitly
-     *         ensure that {@code super.finalize()} is invoked as described in
-     *         {@link Object#finalize}. See the specification for {@link
-     *         Object#finalize()} for further information about migration
-     *         options.
-     */
-    @Deprecated(since = "9", forRemoval = true)
-    @SuppressWarnings("removal")
-    protected void finalize() {
-    }
-
-    /**
      * Constructs an {@code ICC_Profile} object corresponding to the data in a
      * byte array.
      *
@@ -1089,8 +1073,8 @@ public class ICC_Profile implements Serializable {
      * Returns a particular tagged data element from the profile as a byte
      * array. Elements are identified by signatures as defined in the ICC
      * specification. The signature icSigHead can be used to get the header.
-     * This method is useful for advanced applets or applications which need to
-     * access profile data directly.
+     * This method is useful for advanced applications which need to access
+     * profile data directly.
      *
      * @param  tagSignature the ICC tag signature for the data element you want
      *         to get
@@ -1115,8 +1099,8 @@ public class ICC_Profile implements Serializable {
      * Sets a particular tagged data element in the profile from a byte array.
      * The array should contain data in a format, corresponded to the
      * {@code tagSignature} as defined in the ICC specification, section 10.
-     * This method is useful for advanced applets or applications which need to
-     * access profile data directly.
+     * This method is useful for advanced applications which need to access
+     * profile data directly.
      *
      * @param  tagSignature the ICC tag signature for the data element you want
      *         to set
@@ -1355,6 +1339,7 @@ public class ICC_Profile implements Serializable {
      * fileName. If there is no built-in profile with such name, then the method
      * returns {@code null}.
      */
+    @SuppressWarnings("removal")
     private static InputStream getStandardProfileInputStream(String fileName) {
         return AccessController.doPrivileged(
             (PrivilegedAction<InputStream>) () -> {

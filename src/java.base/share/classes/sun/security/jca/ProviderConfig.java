@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -94,6 +94,7 @@ final class ProviderConfig {
     // avoid if not available (pre Solaris 10) to reduce startup time
     // or if disabled via system property
     private void checkSunPKCS11Solaris() {
+        @SuppressWarnings("removal")
         Boolean o = AccessController.doPrivileged(
                                 new PrivilegedAction<Boolean>() {
             public Boolean run() {
@@ -135,10 +136,9 @@ final class ProviderConfig {
         if (this == obj) {
             return true;
         }
-        if (obj instanceof ProviderConfig == false) {
+        if (!(obj instanceof ProviderConfig other)) {
             return false;
         }
-        ProviderConfig other = (ProviderConfig)obj;
         return this.provName.equals(other.provName)
             && this.argument.equals(other.argument);
 
@@ -172,7 +172,7 @@ final class ProviderConfig {
             if (p != null) {
                 return p;
             }
-            if (shouldLoad() == false) {
+            if (!shouldLoad()) {
                 return null;
             }
 
@@ -187,7 +187,8 @@ final class ProviderConfig {
                 p = new sun.security.ssl.SunJSSE();
             } else if (provName.equals("Apple") || provName.equals("apple.security.AppleProvider")) {
                 // need to use reflection since this class only exists on MacOsx
-                p = AccessController.doPrivileged(new PrivilegedAction<Provider>() {
+                @SuppressWarnings("removal")
+                var tmp = AccessController.doPrivileged(new PrivilegedAction<Provider>() {
                     public Provider run() {
                         try {
                             Class<?> c = Class.forName("apple.security.AppleProvider");
@@ -207,6 +208,7 @@ final class ProviderConfig {
                         }
                     }
                 });
+                p = tmp;
             } else {
                 if (isLoading) {
                     // because this method is synchronized, this can only
@@ -240,6 +242,7 @@ final class ProviderConfig {
      * @throws ProviderException if executing the Provider's constructor
      * throws a ProviderException. All other Exceptions are ignored.
      */
+    @SuppressWarnings("removal")
     private Provider doLoadProvider() {
         return AccessController.doPrivileged(new PrivilegedAction<Provider>() {
             public Provider run() {
@@ -294,6 +297,7 @@ final class ProviderConfig {
      *
      * NOTE use of doPrivileged().
      */
+    @SuppressWarnings("removal")
     private static String expand(final String value) {
         // shortcut if value does not contain any properties
         if (value.contains("${") == false) {
@@ -394,6 +398,7 @@ final class ProviderConfig {
                     return null;
                 }
 
+                @SuppressWarnings("removal")
                 Provider p = AccessController.doPrivileged
                     (new PrivilegedExceptionAction<Provider>() {
                     @SuppressWarnings("deprecation") // Class.newInstance
@@ -405,7 +410,7 @@ final class ProviderConfig {
             } catch (Exception e) {
                 Throwable t;
                 if (e instanceof InvocationTargetException) {
-                    t = ((InvocationTargetException)e).getCause();
+                    t = e.getCause();
                 } else {
                     t = e;
                 }

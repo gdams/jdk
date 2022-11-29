@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -272,11 +272,11 @@ public class JMXConnectorFactory {
     }
 
     private static <K,V> Map<K,V> newHashMap() {
-        return new HashMap<K,V>();
+        return new HashMap<>();
     }
 
     private static <K> Map<K,Object> newHashMap(Map<K,?> map) {
-        return new HashMap<K,Object>(map);
+        return new HashMap<>(map);
     }
 
     /**
@@ -378,6 +378,7 @@ public class JMXConnectorFactory {
         return provider.newJMXConnector(serviceURL, fixedenv);
     }
 
+    @SuppressWarnings("removal")
     private static String resolvePkgs(Map<String, ?> env)
             throws JMXProviderException {
 
@@ -446,8 +447,9 @@ public class JMXConnectorFactory {
         return instance;
     }
 
+    @SuppressWarnings("removal")
     private static ClassLoader wrap(final ClassLoader parent) {
-        return parent != null ? AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
+        return parent != null ? AccessController.doPrivileged(new PrivilegedAction<>() {
             @Override
             public ClassLoader run() {
                 return new ClassLoader(parent) {
@@ -617,8 +619,7 @@ public class JMXConnectorFactory {
                             if (e instanceof IOException) {
                                 exception = (IOException) e;
                             } else {
-                                exception = EnvHelp.initCause(
-                                    new IOException(e.getMessage()), e);
+                                exception = new IOException(e.getMessage(), e);
                             }
                         }
                     }

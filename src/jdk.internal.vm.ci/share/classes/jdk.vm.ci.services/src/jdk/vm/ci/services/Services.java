@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2014, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,10 +33,16 @@ import java.util.Formatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
+import jdk.internal.misc.TerminatingThreadLocal;
 import jdk.internal.misc.VM;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  * Provides utilities needed by JVMCI clients.
@@ -97,6 +103,7 @@ public final class Services {
             if (savedProperties == null) {
                 synchronized (Services.class) {
                     if (savedProperties == null) {
+                        @SuppressWarnings("removal")
                         SecurityManager sm = System.getSecurityManager();
                         if (sm != null) {
                             sm.checkPermission(new JVMCIPermission());
@@ -186,6 +193,7 @@ public final class Services {
      *             {@link RuntimePermission}("jvmci")</tt>
      */
     public static <S> Iterable<S> load(Class<S> service) {
+        @SuppressWarnings("removal")
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             sm.checkPermission(new JVMCIPermission());
@@ -203,6 +211,7 @@ public final class Services {
      *             {@link RuntimePermission}("jvmci")</tt>
      */
     public static <S> S loadSingle(Class<S> service, boolean required) {
+        @SuppressWarnings("removal")
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             sm.checkPermission(new JVMCIPermission());
@@ -226,6 +235,34 @@ public final class Services {
             throw new UnsupportedOperationException(errorMessage.toString());
         }
         return singleProvider;
+    }
+
+    /**
+     * Creates a thread-local variable that notifies {@code onThreadTermination} when a thread
+     * terminates and it has been initialized in the terminating thread (even if it was initialized
+     * with a null value). A typical use is to release resources associated with a thread.
+     *
+     * @param initialValue a supplier to be used to determine the initial value
+     * @param onThreadTermination a consumer invoked by a thread when terminating and the
+     *            thread-local has an associated value for the terminating thread. The current
+     *            thread's value of the thread-local variable is passed as a parameter to the
+     *            consumer.
+     */
+    public static <T> ThreadLocal<T> createTerminatingThreadLocal(Supplier<T> initialValue, Consumer<T> onThreadTermination) {
+        Objects.requireNonNull(initialValue, "initialValue must be non null.");
+        Objects.requireNonNull(onThreadTermination, "onThreadTermination must be non null.");
+        return new TerminatingThreadLocal<>() {
+
+            @Override
+            protected T initialValue() {
+                return initialValue.get();
+            }
+
+            @Override
+            protected void threadTerminated(T value) {
+                onThreadTermination.accept(value);
+            }
+        };
     }
 
     /**
@@ -283,8 +320,8 @@ public final class Services {
                 String name = e.getKey();
                 String value = e.getValue();
                 if (name.length() > MAX_UTF8_PROPERTY_STRING_LENGTH || value.length() > MAX_UTF8_PROPERTY_STRING_LENGTH) {
-                    byte[] utf8Name = name.getBytes("UTF-8");
-                    byte[] utf8Value = value.getBytes("UTF-8");
+                    byte[] utf8Name = name.getBytes(UTF_8);
+                    byte[] utf8Value = value.getBytes(UTF_8);
                     out.writeInt(utf8Name.length);
                     out.write(utf8Name);
                     out.writeInt(utf8Value.length);
@@ -326,8 +363,8 @@ public final class Services {
                 int valueLen = in.readInt();
                 byte[] valueBytes = new byte[valueLen];
                 in.read(valueBytes);
-                String name = new String(nameBytes, "UTF-8");
-                String value = new String(valueBytes, "UTF-8");
+                String name = new String(nameBytes, UTF_8);
+                String value = new String(valueBytes, UTF_8);
                 props.put(name, value);
             }
             index++;

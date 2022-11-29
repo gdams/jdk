@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -40,12 +40,13 @@ class SwitchRange;
 
 
 //------------------------------InlineTree-------------------------------------
-class InlineTree : public ResourceObj {
+class InlineTree : public AnyObj {
   friend class VMStructs;
 
   Compile*    C;                  // cache
   JVMState*   _caller_jvms;       // state of caller
   ciMethod*   _method;            // method being called by the caller_jvms
+  bool        _late_inline;       // method is inlined incrementally
   InlineTree* _caller_tree;
   uint        _count_inline_bcs;  // Accumulated count of inlined bytecodes
   const int   _max_inline_level;  // the maximum inline level for this sub-tree (may be adjusted)
@@ -71,17 +72,17 @@ protected:
                             int caller_bci,
                             JVMState* jvms,
                             ciCallProfile& profile,
-                            WarmCallInfo* wci_result,
                             bool& should_delay);
   bool        should_inline(ciMethod* callee_method,
                             ciMethod* caller_method,
                             int caller_bci,
-                            ciCallProfile& profile,
-                            WarmCallInfo* wci_result);
+                            NOT_PRODUCT_ARG(bool& should_delay)
+                            ciCallProfile& profile);
   bool        should_not_inline(ciMethod* callee_method,
                                 ciMethod* caller_method,
-                                JVMState* jvms,
-                                WarmCallInfo* wci_result);
+                                int caller_bci,
+                                NOT_PRODUCT_ARG(bool& should_delay)
+                                ciCallProfile& profile);
   bool        is_not_reached(ciMethod* callee_method,
                              ciMethod* caller_method,
                              int caller_bci,
@@ -91,7 +92,6 @@ protected:
 
   InlineTree* caller_tree()       const { return _caller_tree;  }
   InlineTree* callee_at(int bci, ciMethod* m) const;
-  int         inline_level()      const { return stack_depth(); }
   int         stack_depth()       const { return _caller_jvms ? _caller_jvms->depth() : 0; }
   const char* msg()               const { return _msg; }
   void        set_msg(const char* msg)  { _msg = msg; }
@@ -112,13 +112,18 @@ public:
   // and may be accessed by find_subtree_from_root.
   // The call_method is the dest_method for a special or static invocation.
   // The call_method is an optimized virtual method candidate otherwise.
-  WarmCallInfo* ok_to_inline(ciMethod *call_method, JVMState* caller_jvms, ciCallProfile& profile, WarmCallInfo* wci, bool& should_delay);
+  bool ok_to_inline(ciMethod *call_method, JVMState* caller_jvms, ciCallProfile& profile, bool& should_delay);
+
+  void set_late_inline() {
+    _late_inline = true;
+  }
 
   // Information about inlined method
   JVMState*   caller_jvms()       const { return _caller_jvms; }
   ciMethod   *method()            const { return _method; }
   int         caller_bci()        const { return _caller_jvms ? _caller_jvms->bci() : InvocationEntryBci; }
   uint        count_inline_bcs()  const { return _count_inline_bcs; }
+  int         inline_level()      const { return stack_depth(); }
 
 #ifndef PRODUCT
 private:
@@ -136,7 +141,7 @@ public:
   // Count number of nodes in this subtree
   int         count() const;
   // Dump inlining replay data to the stream.
-  void dump_replay_data(outputStream* out);
+  void dump_replay_data(outputStream* out, int depth_adjust = 0);
 };
 
 
@@ -263,7 +268,7 @@ class Parse : public GraphKit {
 
 #ifndef PRODUCT
   // BytecodeParseHistogram collects number of bytecodes parsed, nodes constructed, and transformations.
-  class BytecodeParseHistogram : public ResourceObj {
+  class BytecodeParseHistogram : public ArenaObj {
    private:
     enum BPHType {
       BPH_transforms,
@@ -483,7 +488,7 @@ class Parse : public GraphKit {
 
   // Insert a compiler safepoint into the graph, if there is a back-branch.
   void maybe_add_safepoint(int target_bci) {
-    if (UseLoopSafepoints && target_bci <= bci()) {
+    if (target_bci <= bci()) {
       add_safepoint();
     }
   }
@@ -504,8 +509,6 @@ class Parse : public GraphKit {
   void modf();
   void modd();
   void l2f();
-
-  void do_irem();
 
   // implementation of _get* and _put* bytecodes
   void do_getstatic() { do_field_access(true,  false); }
@@ -540,14 +543,12 @@ class Parse : public GraphKit {
   void    do_ifnull(BoolTest::mask btest, Node* c);
   void    do_if(BoolTest::mask btest, Node* c);
   int     repush_if_args();
-  void    adjust_map_after_if(BoolTest::mask btest, Node* c, float prob,
-                              Block* path, Block* other_path);
+  void    adjust_map_after_if(BoolTest::mask btest, Node* c, float prob, Block* path);
   void    sharpen_type_after_if(BoolTest::mask btest,
                                 Node* con, const Type* tcon,
                                 Node* val, const Type* tval);
   void    maybe_add_predicate_after_if(Block* path);
   IfNode* jump_if_fork_int(Node* a, Node* b, BoolTest::mask mask, float prob, float cnt);
-  Node*   jump_if_join(Node* iffalse, Node* iftrue);
   void    jump_if_true_fork(IfNode *ifNode, int dest_bci_if_true, bool unc);
   void    jump_if_false_fork(IfNode *ifNode, int dest_bci_if_false, bool unc);
   void    jump_if_always_fork(int dest_bci_if_true, bool unc);
@@ -558,8 +559,6 @@ class Parse : public GraphKit {
   void    jump_switch_ranges(Node* a, SwitchRange* lo, SwitchRange* hi, int depth = 0);
   bool    create_jump_tables(Node* a, SwitchRange* lo, SwitchRange* hi);
   void    linear_search_switch_ranges(Node* key_val, SwitchRange*& lo, SwitchRange*& hi);
-
-  void decrement_age();
 
   // helper function for call statistics
   void count_compiled_calls(bool at_method_entry, bool is_inline) PRODUCT_RETURN;
@@ -599,6 +598,43 @@ class Parse : public GraphKit {
   void dump();
   void dump_bci(int bci);
 #endif
+};
+
+// Specialized uncommon_trap of unstable_if. C2 uses next_bci of path to update the live locals of it.
+class UnstableIfTrap {
+  CallStaticJavaNode* const _unc;
+  bool _modified;            // modified locals based on next_bci()
+  int _next_bci;
+
+public:
+  UnstableIfTrap(CallStaticJavaNode* call, Parse::Block* path): _unc(call), _modified(false) {
+    assert(_unc != NULL && Deoptimization::trap_request_reason(_unc->uncommon_trap_request()) == Deoptimization::Reason_unstable_if,
+          "invalid uncommon_trap call!");
+    _next_bci = path != nullptr ? path->start() : -1;
+  }
+
+  // The starting point of the pruned block, where control goes when
+  // deoptimization does happen.
+  int next_bci() const {
+    return _next_bci;
+  }
+
+  bool modified() const {
+    return _modified;
+  }
+
+  void set_modified() {
+    _modified = true;
+  }
+
+  CallStaticJavaNode* uncommon_trap() const {
+    return _unc;
+  }
+
+  inline void* operator new(size_t x) throw() {
+    Compile* C = Compile::current();
+    return C->comp_arena()->AmallocWords(x);
+  }
 };
 
 #endif // SHARE_OPTO_PARSE_HPP

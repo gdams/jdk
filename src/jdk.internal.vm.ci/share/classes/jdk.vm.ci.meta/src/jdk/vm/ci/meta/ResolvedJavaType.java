@@ -137,11 +137,13 @@ public interface ResolvedJavaType extends JavaType, ModifiersProvider, Annotated
     boolean isAssignableFrom(ResolvedJavaType other);
 
     /**
-     * Returns the {@link ResolvedJavaType} object representing the host class of this VM anonymous
-     * class (as opposed to the unrelated concept specified by {@link Class#isAnonymousClass()}) or
-     * {@code null} if this object does not represent a VM anonymous class.
+     * Returns {@code null} since support for VM anonymous class was removed by JDK-8243287.
+     * This method is preserved for JVMCI backwards compatibility.
      */
-    ResolvedJavaType getHostClass();
+    @Deprecated
+    default ResolvedJavaType getHostClass() {
+        return null;
+    }
 
     /**
      * Returns true if this type is exactly the type {@link java.lang.Object}.
@@ -338,11 +340,31 @@ public interface ResolvedJavaType extends JavaType, ModifiersProvider, Annotated
     ResolvedJavaMethod[] getDeclaredConstructors();
 
     /**
+     * Returns an array reflecting all the constructors declared by this type. This method is
+     * similar to {@link Class#getDeclaredConstructors()} in terms of returned constructors.
+     *
+     * @param forceLink if {@code true}, forces this type to be {@link #link linked}
+     */
+    default ResolvedJavaMethod[] getDeclaredConstructors(boolean forceLink) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Returns an array reflecting all the methods declared by this type. This method is similar to
      * {@link Class#getDeclaredMethods()} in terms of returned methods. Calling this method forces
      * this type to be {@link #link linked}.
      */
     ResolvedJavaMethod[] getDeclaredMethods();
+
+    /**
+     * Returns an array reflecting all the methods declared by this type. This method is similar to
+     * {@link Class#getDeclaredMethods()} in terms of returned methods.
+     *
+     * @param forceLink if {@code true}, forces this type to be {@link #link linked}
+     */
+    default ResolvedJavaMethod[] getDeclaredMethods(boolean forceLink) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Returns the {@code <clinit>} method for this class if there is one.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1714,6 +1714,7 @@ public class Collections {
                         throw new UnsupportedOperationException();
                     }
                     public void forEachRemaining(Consumer<? super Map.Entry<K, V>> action) {
+                        Objects.requireNonNull(action);
                         i.forEachRemaining(entryConsumer(action));
                     }
                 };
@@ -1775,12 +1776,9 @@ public class Collections {
                 if (o == this)
                     return true;
 
-                if (!(o instanceof Set))
-                    return false;
-                Set<?> s = (Set<?>) o;
-                if (s.size() != c.size())
-                    return false;
-                return containsAll(s); // Invokes safe containsAll() above
+                return o instanceof Set<?> s
+                        && s.size() == c.size()
+                        && containsAll(s); // Invokes safe containsAll() above
             }
 
             /**
@@ -1805,11 +1803,9 @@ public class Collections {
                 public boolean equals(Object o) {
                     if (this == o)
                         return true;
-                    if (!(o instanceof Map.Entry))
-                        return false;
-                    Map.Entry<?,?> t = (Map.Entry<?,?>)o;
-                    return eq(e.getKey(),   t.getKey()) &&
-                           eq(e.getValue(), t.getValue());
+                    return o instanceof Map.Entry<?, ?> t
+                            && eq(e.getKey(),   t.getKey())
+                            && eq(e.getValue(), t.getValue());
                 }
                 public String toString() {return e.toString();}
             }
@@ -3883,6 +3879,7 @@ public class Collections {
                     }
 
                     public void forEachRemaining(Consumer<? super Entry<K, V>> action) {
+                        Objects.requireNonNull(action);
                         i.forEachRemaining(
                             e -> action.accept(checkedEntry(e, valueType)));
                     }
@@ -3933,11 +3930,8 @@ public class Collections {
              * setValue method.
              */
             public boolean contains(Object o) {
-                if (!(o instanceof Map.Entry))
-                    return false;
-                Map.Entry<?,?> e = (Map.Entry<?,?>) o;
-                return s.contains(
-                    (e instanceof CheckedEntry) ? e : checkedEntry(e, valueType));
+                return o instanceof Map.Entry<?, ?> e
+                        && s.contains((e instanceof CheckedEntry) ? e : checkedEntry(e, valueType));
             }
 
             /**
@@ -3981,11 +3975,9 @@ public class Collections {
             public boolean equals(Object o) {
                 if (o == this)
                     return true;
-                if (!(o instanceof Set))
-                    return false;
-                Set<?> that = (Set<?>) o;
-                return that.size() == s.size()
-                    && containsAll(that); // Invokes safe containsAll() above
+                return o instanceof Set<?> that
+                        && that.size() == s.size()
+                        && containsAll(that); // Invokes safe containsAll() above
             }
 
             static <K,V,T> CheckedEntry<K,V,T> checkedEntry(Map.Entry<K,V> e,
@@ -5188,10 +5180,18 @@ public class Collections {
         }
 
         public E get(int index) {
-            if (index < 0 || index >= n)
-                throw new IndexOutOfBoundsException("Index: "+index+
-                                                    ", Size: "+n);
+            Objects.checkIndex(index, n);
             return element;
+        }
+
+        @Override
+        public void forEach(Consumer<? super E> action) {
+            Objects.requireNonNull(action);
+            int n = this.n;
+            E element = this.element;
+            for (int i = 0; i < n; i++) {
+                action.accept(element);
+            }
         }
 
         public Object[] toArray() {
@@ -5251,8 +5251,7 @@ public class Collections {
         public boolean equals(Object o) {
             if (o == this)
                 return true;
-            if (o instanceof CopiesList) {
-                CopiesList<?> other = (CopiesList<?>) o;
+            if (o instanceof CopiesList<?> other) {
                 return n == other.n && (n == 0 || eq(element, other.element));
             }
             if (!(o instanceof List))
@@ -5606,7 +5605,7 @@ public class Collections {
      * Adds all of the specified elements to the specified collection.
      * Elements to be added may be specified individually or as an array.
      * The behaviour of this convenience method is similar to that of
-     * {@code cc.addAll(Collections.unmodifiableList(Arrays.asList(elements)))}.
+     * {@code c.addAll(Collections.unmodifiableList(Arrays.asList(elements)))}.
      *
      * <p>When elements are specified individually, this method provides a
      * convenient way to add a few elements to an existing collection:

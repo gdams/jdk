@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015, 2021, Oracle and/or its affiliates. All rights reserved.
+* Copyright (c) 2015, 2022, Oracle and/or its affiliates. All rights reserved.
 * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 *
 * This code is free software; you can redistribute it and/or modify it
@@ -54,7 +54,6 @@ InstanceKlass* KlassFactory::check_shared_class_file_load_hook(
   assert(ik != NULL, "sanity");
   assert(ik->is_shared(), "expecting a shared class");
   if (JvmtiExport::should_post_class_file_load_hook()) {
-    assert(THREAD->is_Java_thread(), "must be JavaThread");
 
     // Post the CFLH
     JvmtiCachedClassFileData* cached_class_file = NULL;
@@ -119,12 +118,15 @@ static ClassFileStream* check_class_file_load_hook(ClassFileStream* stream,
   assert(stream != NULL, "invariant");
 
   if (JvmtiExport::should_post_class_file_load_hook()) {
-    const JavaThread* jt = THREAD->as_Java_thread();
+    const JavaThread* jt = THREAD;
 
     Handle class_loader(THREAD, loader_data->class_loader());
 
     // Get the cached class file bytes (if any) from the class that
-    // is being redefined or retransformed. We use jvmti_thread_state()
+    // is being retransformed. If class file load hook provides
+    // modified class data during class loading or redefinition,
+    // new cached class file buffer should be allocated.
+    // We use jvmti_thread_state()
     // instead of JvmtiThreadState::state_for(jt) so we don't allocate
     // a JvmtiThreadState any earlier than necessary. This will help
     // avoid the bug described by 7126851.
@@ -133,8 +135,7 @@ static ClassFileStream* check_class_file_load_hook(ClassFileStream* stream,
 
     if (state != NULL) {
       Klass* k = state->get_class_being_redefined();
-
-      if (k != NULL) {
+      if (k != NULL && state->get_class_load_kind() == jvmti_class_load_kind_retransform) {
         InstanceKlass* class_being_redefined = InstanceKlass::cast(k);
         *cached_class_file = class_being_redefined->get_cached_class_file();
       }
@@ -171,7 +172,6 @@ InstanceKlass* KlassFactory::create_from_stream(ClassFileStream* stream,
                                                 TRAPS) {
   assert(stream != NULL, "invariant");
   assert(loader_data != NULL, "invariant");
-  assert(THREAD->is_Java_thread(), "must be a JavaThread");
 
   ResourceMark rm(THREAD);
   HandleMark hm(THREAD);
@@ -183,11 +183,8 @@ InstanceKlass* KlassFactory::create_from_stream(ClassFileStream* stream,
   // increment counter
   THREAD->statistical_info().incr_define_class_count();
 
-  assert(!(cl_info.is_hidden() && (cl_info.unsafe_anonymous_host() != NULL)),
-         "hidden class has an anonymous host");
-
-  // Skip this processing for VM hidden or anonymous classes
-  if (!cl_info.is_hidden() && (cl_info.unsafe_anonymous_host() == NULL)) {
+  // Skip this processing for VM hidden classes
+  if (!cl_info.is_hidden()) {
     stream = check_class_file_load_hook(stream,
                                         name,
                                         loader_data,
@@ -216,7 +213,7 @@ InstanceKlass* KlassFactory::create_from_stream(ClassFileStream* stream,
 
 #if INCLUDE_CDS
   if (Arguments::is_dumping_archive()) {
-    ClassLoader::record_result(THREAD, result, stream);
+    ClassLoader::record_result(THREAD, result, stream, old_stream != stream);
   }
 #endif // INCLUDE_CDS
 
