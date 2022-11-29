@@ -309,7 +309,11 @@ endef
 define link-file-relative
 	$(call MakeTargetDir)
 	$(RM) '$(call DecodeSpace, $@)'
-	$(LN) -s '$(call DecodeSpace, $(call RelativePath, $<, $(@D)))' '$(call DecodeSpace, $@)'
+	ifeq ($(call isTargetOs, windows)+$(call isBuildOsEnv, windows.msys2), true+true)
+		$(FIXPATH) $(CMD) /c 'mklink link $(call DecodeSpace, $(call RelativePath, $<, $(@D)))' '$(call DecodeSpace, $@)'
+	else
+		$(LN) -s '$(call DecodeSpace, $(call RelativePath, $<, $(@D)))' '$(call DecodeSpace, $@)'
+	endif
 endef
 
 define link-file-absolute
