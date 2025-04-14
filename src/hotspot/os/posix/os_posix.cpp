@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -491,9 +491,9 @@ static char* chop_extra_memory(size_t size, size_t alignment, char* extra_base, 
 // Multiple threads can race in this code, and can remap over each other with MAP_FIXED,
 // so on posix, unmap the section at the start and at the end of the chunk that we mapped
 // rather than unmapping and remapping the whole chunk to get requested alignment.
-char* os::reserve_memory_aligned(size_t size, size_t alignment, bool exec) {
+char* os::reserve_memory_aligned(size_t size, size_t alignment, MemTag mem_tag, bool exec) {
   size_t extra_size = calculate_aligned_extra_size(size, alignment);
-  char* extra_base = os::reserve_memory(extra_size, exec);
+  char* extra_base = os::reserve_memory(extra_size, mem_tag, exec);
   if (extra_base == nullptr) {
     return nullptr;
   }
@@ -551,7 +551,7 @@ void os::Posix::print_uptime_info(outputStream* st) {
   setutxent();
   while ((ent = getutxent())) {
     if (!strcmp("system boot", ent->ut_line)) {
-      bootsec = ent->ut_tv.tv_sec;
+      bootsec = (int)ent->ut_tv.tv_sec;
       break;
     }
   }

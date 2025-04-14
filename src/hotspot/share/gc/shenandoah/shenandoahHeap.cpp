@@ -166,7 +166,7 @@ static ReservedSpace reserve(size_t size, size_t preferred_page_size) {
     size = align_up(size, alignment);
   }
 
-  const ReservedSpace reserved = MemoryReserver::reserve(size, alignment, preferred_page_size);
+  const ReservedSpace reserved = MemoryReserver::reserve(size, alignment, preferred_page_size, mtGC);
   if (!reserved.is_reserved()) {
     vm_exit_during_initialization("Could not reserve space");
   }
@@ -380,7 +380,7 @@ jint ShenandoahHeap::initialize() {
     for (uintptr_t addr = min; addr <= max; addr <<= 1u) {
       char* req_addr = (char*)addr;
       assert(is_aligned(req_addr, cset_align), "Should be aligned");
-      cset_rs = MemoryReserver::reserve(req_addr, cset_size, cset_align, cset_page_size);
+      cset_rs = MemoryReserver::reserve(req_addr, cset_size, cset_align, cset_page_size, mtGC);
       if (cset_rs.is_reserved()) {
         assert(cset_rs.base() == req_addr, "Allocated where requested: " PTR_FORMAT ", " PTR_FORMAT, p2i(cset_rs.base()), addr);
         _collection_set = new ShenandoahCollectionSet(this, cset_rs, sh_rs.base());
@@ -389,7 +389,7 @@ jint ShenandoahHeap::initialize() {
     }
 
     if (_collection_set == nullptr) {
-      cset_rs = MemoryReserver::reserve(cset_size, cset_align, os::vm_page_size());
+      cset_rs = MemoryReserver::reserve(cset_size, cset_align, os::vm_page_size(), mtGC);
       if (!cset_rs.is_reserved()) {
         vm_exit_during_initialization("Cannot reserve memory for collection set");
       }
@@ -424,8 +424,6 @@ jint ShenandoahHeap::initialize() {
       _affiliations[i] = ShenandoahAffiliation::FREE;
     }
 
-    // Initialize to complete
-    _marking_context->mark_complete();
     size_t young_cset_regions, old_cset_regions;
 
     // We are initializing free set.  We ignore cset region tallies.
@@ -647,6 +645,12 @@ void ShenandoahHeap::print_on(outputStream* st) const {
     st->cr();
     print_heap_regions_on(st);
   }
+}
+
+void ShenandoahHeap::print_on_error(outputStream* st) const {
+  print_on(st);
+  st->cr();
+  print_heap_regions_on(st);
 }
 
 class ShenandoahInitWorkerGCLABClosure : public ThreadClosure {
@@ -2580,12 +2584,6 @@ void ShenandoahHeap::rebuild_free_set(bool concurrent) {
     ShenandoahOldGeneration* old_gen = gen_heap->old_generation();
     old_gen->heuristics()->evaluate_triggers(first_old_region, last_old_region, old_region_count, num_regions());
   }
-}
-
-void ShenandoahHeap::print_extended_on(outputStream *st) const {
-  print_on(st);
-  st->cr();
-  print_heap_regions_on(st);
 }
 
 bool ShenandoahHeap::is_bitmap_slice_committed(ShenandoahHeapRegion* r, bool skip_self) {

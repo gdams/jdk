@@ -309,7 +309,8 @@ address ArchiveBuilder::reserve_buffer() {
   size_t buffer_size = LP64_ONLY(CompressedClassSpaceSize) NOT_LP64(256 * M);
   ReservedSpace rs = MemoryReserver::reserve(buffer_size,
                                              MetaspaceShared::core_region_alignment(),
-                                             os::vm_page_size());
+                                             os::vm_page_size(),
+                                             mtClassShared);
   if (!rs.is_reserved()) {
     log_error(cds)("Failed to reserve %zu bytes of output buffer.", buffer_size);
     MetaspaceShared::unrecoverable_writing_error();
@@ -1544,6 +1545,7 @@ void ArchiveBuilder::write_archive(FileMapInfo* mapinfo, ArchiveHeapInfo* heap_i
   mapinfo->close();
 
   if (log_is_enabled(Info, cds)) {
+    log_info(cds)("Full module graph = %s", CDSConfig::is_dumping_full_module_graph() ? "enabled" : "disabled");
     print_stats();
   }
 

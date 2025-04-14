@@ -329,7 +329,6 @@ jobs:
       msvc-toolset-version: '14.29'
       msvc-toolset-architecture: 'ARM64'
       make-target: 'hotspot'
-      extra-conf-options: '--openjdk-target=aarch64-unknown-cygwin'
       configure-arguments: ${{ github.event.inputs.configure-arguments }}
       make-arguments: ${{ github.event.inputs.make-arguments }}
     if: needs.prepare.outputs.windows-aarch64 == 'true'
